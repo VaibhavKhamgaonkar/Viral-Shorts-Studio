@@ -12,6 +12,7 @@
     <script src="/studio/clip-editor.js" defer></script>
     <script src="/studio/editor-visuals.js" defer></script>
     <script src="/studio/editor-timeline.js" defer></script>
+    <script src="/studio/editor-tools.js" defer></script>
     <script src="/studio/task-notifications.js" defer></script>
     <script src="/studio/queue.js" defer></script>
 </head>
@@ -343,26 +344,68 @@
                     </div>
                 </figure>
             </div>
+            <p id="editor-focus-status" class="editor-comparison-status" role="status" hidden></p>
+            <p id="editor-comparison-status" class="editor-comparison-status" hidden></p>
+        </section>
+        <section class="editor-sequence panel-plum" aria-labelledby="editor-sequence-title">
+            <div class="editor-sequence-heading">
+                <h3 id="editor-sequence-title">Timeline</h3>
+                <output id="editor-output-duration"></output>
+            </div>
             <div class="editor-transport" id="editor-live-transport">
                 <button id="editor-play" class="button button-outline" type="button" disabled>Play</button>
                 <input id="editor-seek" type="range" value="0" min="0" max="1" step=".01" aria-label="Preview position" disabled>
                 <span id="editor-time">0:00 / 0:00</span>
                 <div class="editor-frame-step">
-                    <button id="editor-prev-frame" class="button button-outline" type="button" disabled>Previous frame</button>
-                    <button id="editor-next-frame" class="button button-outline" type="button" disabled>Next frame</button>
+                    <button id="editor-prev-frame" class="button button-outline" type="button" title="Previous frame" aria-label="Previous frame" disabled><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></button>
+                    <button id="editor-next-frame" class="button button-outline" type="button" title="Next frame" aria-label="Next frame" disabled><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></button>
                     <span id="editor-current-frame"></span>
                 </div>
             </div>
-            <p id="editor-focus-status" class="editor-comparison-status" role="status" hidden></p>
-            <p id="editor-comparison-status" class="editor-comparison-status" hidden></p>
             <div id="editor-timeline-tracks" class="editor-timeline-tracks" aria-label="Edit timeline" hidden></div>
         </section>
         <form id="editor-form" class="editor-controls">
+            <div id="editor-tabs" class="editor-tabs" role="tablist" aria-label="Editing tools">
+                <button type="button" id="editor-tab-cut" role="tab" aria-controls="editor-panel-cut" aria-selected="true"><svg class="icon" aria-hidden="true"><use href="#i-cut"/></svg> Cut</button>
+                <button type="button" id="editor-tab-picture" role="tab" aria-controls="editor-panel-picture" aria-selected="false" tabindex="-1"><svg class="icon" aria-hidden="true"><use href="#i-film"/></svg> Picture</button>
+                <button type="button" id="editor-tab-text" role="tab" aria-controls="editor-panel-text" aria-selected="false" tabindex="-1"><svg class="icon" aria-hidden="true"><use href="#i-edit"/></svg> Text</button>
+                <button type="button" id="editor-tab-audio" role="tab" aria-controls="editor-panel-audio" aria-selected="false" tabindex="-1"><svg class="icon" aria-hidden="true"><use href="#i-music"/></svg> Audio</button>
+                <button type="button" id="editor-tab-inserts" role="tab" aria-controls="editor-panel-inserts" aria-selected="false" tabindex="-1"><svg class="icon" aria-hidden="true"><use href="#i-spark"/></svg> Inserts</button>
+            </div>
+            <div class="editor-inspector-body">
+            <div id="editor-panel-cut" role="tabpanel" aria-labelledby="editor-tab-cut">
+                <section class="editor-group">
+                    <h3>Trim ends</h3>
+                    <div class="editor-fields">
+                        <div class="field"><label for="editor-start">Start (sec)</label><input id="editor-start" name="start" type="number" min="0" step=".01" value="0" required></div>
+                        <div class="field"><label for="editor-end">End (sec)</label><input id="editor-end" name="end" type="number" min=".24" step=".01" required></div>
+                    </div>
+                    <div class="editor-reaction-actions">
+                        <button type="button" class="button button-outline" id="editor-trim-start-here">Start at playhead</button>
+                        <button type="button" class="button button-outline" id="editor-trim-end-here">End at playhead</button>
+                    </div>
+                </section>
+                <section class="editor-group">
+                    <h3>Remove a section</h3>
+                    <p class="editor-hint">Split at the playhead and select a section on the timeline, or mark its start and end. The video closes the gap after removal.</p>
+                    <div class="editor-reaction-actions">
+                        <button type="button" class="button button-outline" id="editor-split">Split at playhead</button>
+                        <button type="button" class="button button-plain" id="editor-clear-splits" hidden>Clear split marks</button>
+                    </div>
+                    <div class="editor-fields editor-cut-fields">
+                        <div class="field"><label for="editor-cut-start">Cut start (sec)</label><input id="editor-cut-start" type="number" min="0" step="any"><button type="button" id="editor-mark-cut-start" class="button button-plain">Mark start here</button></div>
+                        <div class="field"><label for="editor-cut-end">Cut end (sec)</label><input id="editor-cut-end" type="number" min="0" step="any"><button type="button" id="editor-mark-cut-end" class="button button-plain">Mark end here</button></div>
+                    </div>
+                    <div class="editor-reaction-actions"><button type="button" class="button button-outline" id="editor-add-cut">Remove section</button></div>
+                    <p id="editor-cut-status" class="editor-hint" role="status"></p>
+                    <div id="editor-cut-cues" class="editor-visual-cues"></div>
+                    <div class="field editor-cut-transition"><label for="editor-cut-transition">Cut transition</label><select id="editor-cut-transition" name="cut_transition"><option value="hard">Hard cut</option><option value="fade">Short dip to black</option></select></div>
+                </section>
+            </div>
+            <div id="editor-panel-picture" role="tabpanel" aria-labelledby="editor-tab-picture" hidden>
             <section class="editor-group">
-                <h3>Trim &amp; picture</h3>
+                <h3>Whole clip</h3>
                 <div class="editor-fields">
-                    <div class="field"><label for="editor-start">Start (sec)</label><input id="editor-start" name="start" type="number" min="0" step=".01" value="0" required></div>
-                    <div class="field"><label for="editor-end">End (sec)</label><input id="editor-end" name="end" type="number" min=".24" step=".01" required></div>
                     <div class="field"><label for="editor-look">Color look</label><select id="editor-look" name="look"><option value="original">Original</option><option value="vivid">Vivid</option><option value="monochrome">Black and white</option></select></div>
                     <div class="field"><label for="editor-zoom">Center zoom <output for="editor-zoom" id="editor-zoom-value">100%</output></label><input id="editor-zoom" name="zoom" type="range" min="100" max="150" value="100"></div>
                     <div class="field"><label for="editor-frame-choice">Frame or backdrop</label><select id="editor-frame-choice" name="frame"><option value="">None</option></select></div>
@@ -400,8 +443,38 @@
                 </div>
                 <div id="editor-picture-ranges" class="editor-visual-cues"></div>
             </details>
-            <details class="editor-group editor-disclosure">
-                <summary>Animated text</summary>
+            </div>
+            <div id="editor-panel-text" role="tabpanel" aria-labelledby="editor-tab-text" hidden>
+            <section class="editor-group">
+                <h3>Speech captions</h3>
+                <div class="editor-reaction-actions">
+                    <button id="editor-generate-captions" class="button button-outline" type="button">Generate with Whisper</button>
+                    <button id="editor-new-caption" class="button button-plain" type="button">Add caption</button>
+                </div>
+                <p id="editor-caption-status" class="editor-hint" role="status"></p>
+                <div class="field editor-caption-style"><label for="editor-caption-style">Caption style</label><select id="editor-caption-style" name="caption_style"><option value="clean">Clean</option><option value="bold">Bold with keyword highlight</option></select></div>
+                <div id="editor-caption-list" class="field" hidden>
+                    <label for="editor-caption-select">Caption to edit</label>
+                    <select id="editor-caption-select"></select>
+                    <button id="editor-jump-caption" class="button button-plain" type="button">Show on preview</button>
+                </div>
+                <div id="editor-caption-draft" hidden>
+                    <div class="field"><label for="editor-caption-text">Caption text</label><textarea id="editor-caption-text" rows="2" maxlength="1000"></textarea></div>
+                    <div class="editor-fields">
+                        <div class="field"><label for="editor-caption-start">Caption start (sec)</label><input id="editor-caption-start" type="number" step="any"></div>
+                        <div class="field"><label for="editor-caption-end">Caption end (sec)</label><input id="editor-caption-end" type="number" step="any"></div>
+                    </div>
+                    <p class="editor-hint">Caption times refer to the original clip.</p>
+                    <div class="editor-reaction-actions">
+                        <button id="editor-save-caption" class="button button-outline" type="button">Save caption</button>
+                        <button id="editor-remove-caption" class="button button-plain" type="button">Delete caption</button>
+                        <button id="editor-cancel-caption" class="button button-plain" type="button">Cancel</button>
+                    </div>
+                </div>
+                <button id="editor-clear-captions" class="button button-plain" type="button" hidden>Clear all captions</button>
+            </section>
+            <details class="editor-group editor-disclosure" id="editor-animated-titles">
+                <summary>Animated titles</summary>
                 <div class="field"><label for="editor-title-text">Title text</label><textarea id="editor-title-text" rows="2" maxlength="120" placeholder="Enter your on-screen text"></textarea></div>
                 <div class="editor-title-options">
                     <div class="field"><label for="editor-title-motion">Motion</label><select id="editor-title-motion"><option value="pop">Pop</option><option value="slide">Slide up</option><option value="fade">Fade</option></select></div>
@@ -411,8 +484,10 @@
                 <button id="editor-add-title" class="button button-outline" type="button">Add title at playhead</button>
                 <div id="editor-title-cues" class="editor-visual-cues"></div>
             </details>
-            <details class="editor-group editor-disclosure">
-                <summary>Reaction inserts</summary>
+            </div>
+            <div id="editor-panel-inserts" role="tabpanel" aria-labelledby="editor-tab-inserts" hidden>
+            <section class="editor-group">
+                <h3>Reaction inserts</h3>
                 <div class="editor-reaction-picker">
                     <div class="editor-reaction-thumb">
                         <img id="editor-reaction-image" alt="" hidden>
@@ -431,23 +506,11 @@
                 <p class="editor-hint">Set each cutaway on the trimmed timeline. Choose Play rendered edit to review the cutaways in sequence.</p>
                 <div id="editor-insert-cues" class="editor-visual-cues"></div>
                 <p id="editor-extended-time" class="editor-hint" hidden></p>
-            </details>
-            <details class="editor-group editor-disclosure">
-                <summary>Speech captions</summary>
-                <p class="editor-hint">Use Whisper on clips with audible speech that need captions.</p>
-                <div class="editor-reaction-actions editor-caption-actions">
-                    <button id="editor-generate-captions" class="button button-outline" type="button">Generate captions</button>
-                    <button id="editor-clear-captions" class="button button-plain" type="button" hidden>Clear generated captions</button>
-                </div>
-                <p id="editor-caption-status" class="editor-hint" role="status"></p>
-                <div id="editor-caption-list" class="field" hidden>
-                    <label for="editor-caption-select">Jump to a caption in the edited preview</label>
-                    <select id="editor-caption-select"></select>
-                    <button id="editor-jump-caption" class="button button-outline" type="button">Show selected caption</button>
-                </div>
-            </details>
+            </section>
+            </div>
+            <div id="editor-panel-audio" role="tabpanel" aria-labelledby="editor-tab-audio" hidden>
             <section class="editor-group">
-                <h3>Audio mix</h3>
+                <h3>Source and music</h3>
                 <div class="editor-fields">
                     <div class="field"><label for="editor-source-level">Original <output id="editor-source-level-value" for="editor-source-level">100%</output></label><input id="editor-source-level" name="source_level" type="range" min="0" max="100" value="100"></div>
                     <div class="field"><label for="editor-music-level">Music <output id="editor-music-level-value" for="editor-music-level">20%</output></label><input id="editor-music-level" name="music_level" type="range" min="0" max="100" value="20"></div>
@@ -460,6 +523,15 @@
                         <input id="editor-track-file" type="file" accept=".mp3,.wav,.m4a,.aac,.flac,.ogg" hidden>
                     </div>
                 </div>
+                <div id="editor-music-options" hidden>
+                    <div class="editor-fields">
+                        <div class="field"><label for="editor-music-fade-in">Music fade in</label><select id="editor-music-fade-in" name="music_fade_in"><option value="0">Off</option><option value=".25">0.25 sec</option><option value=".5">0.5 sec</option><option value="1">1 sec</option><option value="2">2 sec</option></select></div>
+                        <div class="field"><label for="editor-music-fade-out">Music fade out</label><select id="editor-music-fade-out" name="music_fade_out"><option value="0">Off</option><option value=".25">0.25 sec</option><option value=".5">0.5 sec</option><option value="1">1 sec</option><option value="2">2 sec</option></select></div>
+                    </div>
+                    <label class="check"><input type="checkbox" name="duck_music"> Lower music under foreground audio</label>
+                </div>
+                <label class="check"><input type="checkbox" name="clean_voice"> Reduce steady background noise</label>
+                <p class="editor-hint">Use Play rendered edit to hear noise reduction and automatic music levels.</p>
             </section>
             <section class="editor-group">
                 <h3>Sound effects</h3>
@@ -473,6 +545,8 @@
                 <p id="editor-sound-note" class="editor-hint" hidden></p>
                 <div id="editor-cues" class="editor-cues"></div>
             </section>
+            </div>
+            </div>
         </form>
     </div>
     <footer class="editor-footer">

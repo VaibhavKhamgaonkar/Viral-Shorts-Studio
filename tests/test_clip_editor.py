@@ -253,3 +253,67 @@ class ClipEditorTests(unittest.TestCase):
                 self.assertGreater(frames[15][40, 12, 2], 200)
                 invalid = client.post(route, json={"start": 0, "end": .9, "ranges": [focus | {"focus_x": 101}]})
                 self.assertEqual(invalid.status_code, 422)
+
+    def test_removed_section_joins_video_and_audio_and_keeps_insert_and_music(self):
+        ffmpeg = get_ffmpeg_cmd()
+        if not which(ffmpeg):
+            self.skipTest("FFmpeg is required to verify the edited timeline")
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            folder = root / "Cuts_[original]"
+            folder.mkdir()
+            source = folder / "clip-01.mp4"
+            subprocess.run([ffmpeg, "-v", "error", "-f", "lavfi", "-i",
+                            "color=blue:s=160x284:r=30:d=3,drawbox=c=red:t=fill:enable='between(t,1,1.99)'",
+                            "-f", "lavfi", "-i", "sine=frequency=240:duration=3",
+                            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(source)], check=True)
+            subprocess.run([ffmpeg, "-v", "error", "-f", "lavfi", "-i", "sine=frequency=510:duration=1",
+                            str(root / "track.wav")], check=True)
+            with patch.multiple(app, OUTPUT_DIR=root, MUSIC_DIR=root, JOB_QUEUE=JobQueue(root / "queue.sqlite3")), \
+                    TestClient(app.app) as client:
+                route = "/api/edit/Cuts_[original]/clip-01.mp4"
+                edit = {
+                    "start": 0, "end": 3, "cuts": [{"at": 1, "end": 2}],
+                    "cut_fade": True, "music_track": "track.wav", "clean_voice": True,
+                    "duck_music": True, "music_fade_in": .4, "music_fade_out": .4,
+                    "captions": [{"start": 1.1, "end": 1.8, "text": "Remove this caption"},
+                                 {"start": 2.4, "end": 2.9, "text": "Keep this caption"}],
+                    "caption_style": "bold",
+                }
+                self.assertEqual(client.post(route, json=edit | {"inserts": [{"asset": "laugh", "at": 1.5}]}).status_code, 422)
+                preview = client.post(route + "/preview", json=edit)
+                self.assertEqual(preview.status_code, 200, preview.text[:300] if not preview.is_success else "")
+                with av.open(BytesIO(preview.content)) as media:
+                    frames = [frame.to_ndarray(format="rgb24") for frame in media.decode(video=0)]
+                    self.assertAlmostEqual(media.duration / av.time_base, 2, delta=.06)
+                self.assertEqual(len(frames), 60)
+                self.assertLess(frames[30][100, 30, 2], 50)
+                self.assertGreater(frames[38][100, 30, 2], 200)
+                self.assertTrue(all(frame[100, 30, 0] < 50 for frame in frames))
+                self.assertGreater(frames[48][172:235, :, 1].max(), 160)
+                with av.open(BytesIO(preview.content)) as media:
+                    audio = np.concatenate([frame.to_ndarray()[0] for frame in media.decode(audio=0)])
+                self.assertGreater(np.abs(audio[44000:45000]).max(), .02)
+                self.assertGreater(np.abs(audio[57500:60500]).max(), .02)
+                without_ducking = client.post(route + "/preview", json=edit | {"duck_music": False})
+                self.assertEqual(without_ducking.status_code, 200)
+                with av.open(BytesIO(without_ducking.content)) as media:
+                    unducked = np.concatenate([frame.to_ndarray()[0] for frame in media.decode(audio=0)])
+
+                def music_amplitude(samples, start, end):
+                    window = samples[round(start * 48000):round(end * 48000)]
+                    phase = np.arange(len(window)) * (2j * np.pi * 510 / 48000)
+                    return abs(np.dot(window, np.exp(phase))) / len(window)
+
+                self.assertLess(music_amplitude(audio, .5, .9), .8 * music_amplitude(unducked, .5, .9))
+                self.assertLess(music_amplitude(unducked, .03, .13), .5 * music_amplitude(unducked, .5, .9))
+                self.assertLess(music_amplitude(unducked, 1.87, 1.97), .5 * music_amplitude(unducked, .5, .9))
+                queued = client.post(route, json=edit | {"inserts": [{"asset": "laugh", "at": 2.3}]})
+                self.assertEqual(queued.status_code, 200, queued.text)
+                self.assertEqual(self.wait_for_job(client, queued.json()["job_id"])["status"], "completed")
+                output = folder / "clip-01-v2.mp4"
+                duration, has_audio = inspect_media(output)
+                self.assertAlmostEqual(duration, 2.96, delta=.09)
+                self.assertTrue(has_audio)
+                metadata = json.loads(output.with_suffix(".json").read_text(encoding="utf-8"))
+                self.assertEqual(metadata["posting_context"], "Keep this caption")

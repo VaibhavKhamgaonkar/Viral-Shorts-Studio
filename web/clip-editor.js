@@ -37,9 +37,14 @@ function updateEditorTransport() {
     editorSeek.max = length || 1;
     editorSeek.value = elapsed;
     byId("editor-time").textContent = editorClock(elapsed) + " / " + editorClock(length);
+    if (editSession) {
+        const output = valid ? editorClock(editLength(length, editSession.cuts, editSession.inserts, editSession.insertAssets)) + " edited duration" : "";
+        byId("editor-output-duration").textContent = output;
+    }
     editorSeek.disabled = editorPlay.disabled = !valid;
     byId("editor-prev-frame").disabled = byId("editor-next-frame").disabled = !valid;
     byId("editor-focus-toggle").disabled = !valid;
+    byId("editor-split").disabled = !valid;
     editorExport.disabled = !valid || Boolean(editSession?.saving);
     byId("editor-add-effect").disabled = !valid || !byId("editor-effect").value || (editSession?.cues.length || 0) >= 12;
     updateEditorComparison(start, elapsed, valid);
@@ -170,7 +175,12 @@ function tickEditorPreview() {
     updateEditorTransport();
     if (!editorIsPlaying()) return;
     const {end, valid} = editorRange();
-    if (!valid || editorVideo.currentTime >= end) {
+    const removed = cutAtSourceTime();
+    if (removed && editorRange().start + removed.end < end) {
+        editorVideo.currentTime = editorRange().start + removed.end;
+        return;
+    }
+    if (!valid || editorVideo.currentTime >= end || removed) {
         editorVideo.pause();
         if (valid) editorVideo.currentTime = end;
         return;
@@ -188,7 +198,7 @@ function renderEditorCues() {
         time.step = ".01";
         time.value = cue.at.toFixed(2);
         time.setAttribute("aria-label", cue.label + " time in seconds");
-        time.addEventListener("input", () => { cue.at = time.valueAsNumber; scheduleEditorSounds(); });
+        time.addEventListener("input", () => { cue.at = time.valueAsNumber; scheduleEditorSounds(); renderEditorTimeline(); });
         const level = element("input");
         level.type = "range";
         level.min = "0";
@@ -212,10 +222,13 @@ function renderEditorCues() {
         return row;
     }));
     updateEditorTransport();
+    renderEditorTimeline();
 }
 
 function changeEditorTrack() {
     const filename = byId("editor-track").value;
+    byId("editor-music-options").hidden = !filename;
+    byId("editor-music-level").disabled = !filename;
     editorMusic.pause();
     if (filename) editorMusic.src = "/api/editor-music/" + encodeURIComponent(filename);
     else editorMusic.removeAttribute("src");
@@ -223,11 +236,13 @@ function changeEditorTrack() {
 }
 
 async function openClipEditor(clip, path, uri) {
-    const session = editSession = {path, clip, cues: [], titles: [], inserts: [], captions: [], ranges: [], fps: 30, looks: new Map(), insertAssets: new Map()};
+    const session = editSession = {path, clip, cues: [], titles: [], inserts: [], captions: [], ranges: [], cuts: [], splits: [], fps: 30, looks: new Map(), insertAssets: new Map()};
     editorForm.reset();
     resetEditorVisuals();
+    resetEditorTools();
     openEditorComparison(uri, session);
     byId("editor-track").replaceChildren(new Option("No music", ""));
+    changeEditorTrack();
     byId("editor-effect").replaceChildren(new Option("Loading sounds…", ""));
     byId("editor-hear-effect").disabled = true;
     editorPlay.textContent = "Play";
@@ -396,11 +411,14 @@ function editorPayload() {
     return {
         start, end, zoom: Number(fields.get("zoom")), mirror: fields.has("mirror"), look: fields.get("look"),
         source_level: Number(fields.get("source_level")), music_track: fields.get("music_track"),
-        music_level: Number(fields.get("music_level")),
+        music_level: byId("editor-music-level").valueAsNumber,
         save_mode: fields.get("save_mode"), source_revision: session.clip.file_revision || "",
         cues: session.cues.map(({effect, at, level}) => ({effect, at, level})),
         frame: fields.get("frame"), titles: session.titles, inserts: session.inserts, captions: session.captions,
-        ranges: session.ranges,
+        ranges: session.ranges, cuts: session.cuts, cut_fade: fields.get("cut_transition") === "fade",
+        caption_style: fields.get("caption_style"), clean_voice: fields.has("clean_voice"),
+        duck_music: fields.has("duck_music"), music_fade_in: Number(fields.get("music_fade_in")),
+        music_fade_out: Number(fields.get("music_fade_out")),
     };
 }
 

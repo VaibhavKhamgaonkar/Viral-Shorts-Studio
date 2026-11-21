@@ -59,6 +59,7 @@ function updateEditorComparison(start, elapsed, valid) {
     byId("editor-current-frame").textContent = valid
         ? "Frame " + (Math.floor((elapsed + .0005) / editorFrameStep()) + 1) + " · " + elapsed.toFixed(3) + " s"
         : "";
+    timelineTracks.style.setProperty("--playhead", (valid ? 100 * elapsed / (editorRange().end - start) : 0) + "%");
     for (const marker of activeMarkers) {
         marker.button.setAttribute("aria-current", String(elapsed >= marker.at && elapsed < marker.end));
     }
@@ -78,16 +79,24 @@ function setRenderedComparison(edit) {
     endFocusDraft();
     timelineTracks.hidden = true;
     comparisonStatus.hidden = false;
-    comparisonStatus.textContent = "During an insert, Original pauses at the cut while Edited plays the cutaway.";
+    comparisonStatus.textContent = edit.inserts.length
+        ? "Original pauses during cutaways."
+        : edit.cuts.length ? "Edited plays only the sections you kept." : "";
+    comparisonStatus.hidden = !comparisonStatus.textContent;
 }
 
 function renderedSourcePosition(time, edit, assets) {
     let offset = 0;
-    for (const cut of [...edit.inserts].sort((left, right) => left.at - right.at)) {
-        const start = cut.at + offset;
-        const duration = assets.get(cut.asset).duration;
+    const events = [...edit.cuts, ...edit.inserts].sort((left, right) => left.at - right.at);
+    for (const event of events) {
+        const start = event.at + offset;
         if (time < start) break;
-        if (time < start + duration) return {time: edit.start + cut.at, insideInsert: true};
+        if (!event.asset) {
+            offset -= event.end - event.at;
+            continue;
+        }
+        const duration = assets.get(event.asset).duration;
+        if (time < start + duration) return {time: edit.start + event.at, insideInsert: true};
         offset += duration;
     }
     return {time: edit.start + time - offset, insideInsert: false};
@@ -125,16 +134,18 @@ function visibleEditorCaptions() {
     const {start, end, valid} = editorRange();
     if (!valid) return [];
     return (editSession.captionLines || []).filter(line => line.end > start && line.start < end).map(line => ({
-        at: Math.max(0, line.start - start), end: Math.min(end, line.end) - start, text: line.text,
+        at: Math.max(0, line.start - start), end: Math.min(end, line.end) - start, text: line.text, sourceIndex: line.sourceIndex,
     }));
 }
 
 function showCaptionIndicator(active) {
     if (renderedComparison) return;
     timelineTracks.hidden = timelineTracks.childElementCount === 0;
-    comparisonStatus.hidden = !editSession.captions.length;
+    const removed = cutAtSourceTime();
+    comparisonStatus.hidden = !removed && !editSession.captions.length;
     if (!comparisonStatus.hidden) {
-        const status = active ? "Caption visible in the Edited pane." : "No caption at this time. Select a caption marker to jump to speech.";
+        const status = removed ? "This section is marked for removal."
+            : active ? "Caption visible in the Edited pane." : "No caption at this time. Select a caption marker to jump to speech.";
         if (comparisonStatus.textContent !== status) comparisonStatus.textContent = status;
     }
 }
@@ -143,16 +154,20 @@ function renderEditorTimeline() {
     if (!editSession) return;
     const {start, end, valid} = editorRange();
     const tracks = [
+        ["source", "Source", valid ? editorSourceSections(end - start) : []],
+        ["cuts", "Cuts", editSession.cuts.map(cut => ({...cut, text: "Removed section"}))],
         ["captions", "Captions", visibleEditorCaptions()],
         ["titles", "Titles", editSession.titles],
         ["picture", "Picture", editSession.ranges.map(range => ({...range, text: hasOffCenterFocus(range) ? "Focus crop" : "Picture effect"}))],
         ["inserts", "Inserts", editSession.inserts.map(cut => ({at: cut.at, end: cut.at, text: editSession.insertAssets.get(cut.asset).label}))],
+        ["sounds", "Sounds", editSession.cues.map(cue => ({at: cue.at, end: cue.at, text: cue.label}))],
     ];
-    const previous = byId("editor-caption-select").value;
-    byId("editor-caption-select").replaceChildren(...tracks[0][2].map((line, index) =>
-        new Option(editorClock(line.at) + " · " + line.text, String(index))));
-    if (byId("editor-caption-select").options[Number(previous)]) byId("editor-caption-select").value = previous || "0";
-    byId("editor-caption-list").hidden = tracks[0][2].length === 0;
+    const captionSelect = byId("editor-caption-select");
+    const previous = captionSelect.value;
+    captionSelect.replaceChildren(...editSession.captions.map((line, index) =>
+        new Option(editorClock(line.start) + " · " + line.text.slice(0, 100), String(index))));
+    if (captionSelect.options[Number(previous)]) captionSelect.value = previous || "0";
+    byId("editor-caption-list").hidden = !editSession.captions.length;
     activeMarkers = [];
     timelineTracks.replaceChildren();
     timelineTracks.hidden = !valid || Boolean(renderedComparison);
@@ -170,9 +185,18 @@ function renderEditorTimeline() {
             marker.type = "button";
             marker.title = editorClock(cue.at) + " · " + cue.text;
             marker.setAttribute("aria-label", "Jump to " + marker.title);
-            marker.style.left = Math.min(98, cue.at / duration * 100) + "%";
+            marker.style.left = "min(" + (cue.at / duration * 100) + "%, calc(100% - 8px))";
             marker.style.width = Math.max(0, (Math.min(duration, cue.end) - cue.at) / duration * 100) + "%";
-            marker.addEventListener("click", () => jumpToEditorCue(cue.at, cue.end));
+            marker.addEventListener("click", () => {
+                const tool = {source: "cut", cuts: "cut", captions: "text", titles: "text",
+                    picture: "picture", inserts: "inserts", sounds: "audio"}[type];
+                showEditorTool(tool);
+                if (type === "captions") chooseCaption(cue.sourceIndex);
+                if (type === "source") selectSourceSection(cue.at, cue.end);
+                if (type === "picture") byId("editor-range-effects").open = true;
+                if (type === "titles") byId("editor-animated-titles").open = true;
+                jumpToEditorCue(cue.at, cue.end);
+            });
             bar.append(marker);
             activeMarkers.push({button: marker, at: cue.at, end: cue.end});
         }
@@ -182,8 +206,11 @@ function renderEditorTimeline() {
 }
 
 byId("editor-jump-caption").addEventListener("click", () => {
-    const line = visibleEditorCaptions()[Number(byId("editor-caption-select").value)];
+    const index = Number(byId("editor-caption-select").value);
+    const line = visibleEditorCaptions().find(line => line.sourceIndex === index);
+    chooseCaption(index);
     if (line) jumpToEditorCue(line.at, line.end);
+    else byId("editor-caption-status").textContent = "This caption is outside the current trim.";
 });
 
 function editorFrameStep() {

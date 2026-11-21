@@ -24,7 +24,10 @@ from starlette.background import BackgroundTask
 from config.settings import load_settings, save_settings
 from config.studio import Layout, StudioSettings, studio_settings
 from core.analyzer import generate_post_copy
-from core.clip_editor import ClipEdit, EFFECTS, LOOKS, InsertAsset, effect_wave, frame_rate, render_edit, validate_timeline
+from core.clip_editor import (
+    ClipEdit, EFFECTS, LOOKS, InsertAsset, edit_duration, effect_wave, frame_rate, kept_source_ranges,
+    render_edit, validate_timeline,
+)
 from core.downloader import DOWNLOADS_DIR, clear_all_downloads_detailed, get_downloads_storage_info, sanitize_filename
 from core.editor_visuals import FRAMES, REACTIONS, REACTION_DURATION, frame_gif, reaction_gif
 from core.job_queue import DuplicateJob, JobQueue
@@ -610,7 +613,7 @@ def process_edit(payload, update):
     base_title = existing.get("version_title") or title
     base_name = existing.get("version_base") or video.stem
     inserts = {cue.asset: editor_insert_asset(cue.asset) for cue in edit.inserts}
-    duration = edit.end - edit.start + sum(inserts[cue.asset].duration for cue in edit.inserts)
+    duration = edit_duration(edit, inserts)
     detail = f"{duration:.2f} seconds · {len(edit.cues)} sound effects"
     with TemporaryDirectory(dir=video.parent) as scratch:
         staging = Path(scratch)
@@ -634,7 +637,10 @@ def process_edit(payload, update):
             retained.pop("posting_context", None)
             if retained.get("copy_source") == "ai":
                 retained["copy_needs_review"] = True
-            transcript = " ".join(line.text for line in edit.captions if line.end > edit.start and line.start < edit.end)
+            kept = [(edit.start + start, edit.start + end) for start, end in kept_source_ranges(edit)]
+            transcript = " ".join(
+                line.text for line in edit.captions if any(line.end > start and line.start < end for start, end in kept)
+            )
             if transcript:
                 retained["posting_context"] = transcript[:6500]
             write_clip_metadata(sidecar, retained | {

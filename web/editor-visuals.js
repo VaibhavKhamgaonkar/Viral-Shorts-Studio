@@ -51,6 +51,7 @@ function resetEditorVisuals() {
     byId("editor-caption-status").textContent = "";
     byId("editor-clear-captions").hidden = true;
     byId("editor-generate-captions").disabled = false;
+    byId("editor-generate-captions").textContent = "Generate with Whisper";
     byId("editor-reaction-hint").textContent = "";
     byId("editor-add-title").textContent = "Add title at playhead";
     reactionMenu.replaceChildren(new Option("Loading reactions…", ""));
@@ -200,7 +201,14 @@ function updateEditorVisuals(start, length, valid) {
     const time = editorVideo.currentTime;
     const caption = valid && editSession.captionLines?.find(line => time >= line.start && time < line.end);
     captionOverlay.hidden = !caption;
-    if (caption && captionOverlay.textContent !== caption.text) captionOverlay.textContent = caption.text;
+    const style = byId("editor-caption-style").value;
+    if (caption && (captionOverlay.textContent !== caption.text || captionOverlay.dataset.style !== style)) {
+        captionOverlay.dataset.style = style;
+        if (style === "bold") {
+            const [keyword, ...rest] = caption.text.split(/\s+/);
+            captionOverlay.replaceChildren(element("strong", null, keyword), rest.length ? " " + rest.join(" ") : "");
+        } else captionOverlay.textContent = caption.text;
+    }
     showCaptionIndicator(Boolean(caption));
     const total = byId("editor-extended-time");
     total.hidden = !valid || editSession.inserts.length === 0;
@@ -223,7 +231,7 @@ function validateEditorVisuals(session, duration) {
             range.end <= range.at || (index && ordered[index - 1].end > range.at))) {
         return "Keep picture ranges within the trim and avoid overlaps.";
     }
-    return "";
+    return cutProblem(session.cuts, duration, session.inserts);
 }
 
 editorForm.addEventListener("input", () => {
@@ -259,7 +267,12 @@ byId("editor-add-reaction").addEventListener("click", () => {
     if (!valid || !reactionMenu.value || editSession.inserts.length >= 4) return;
     clearRenderedPreview();
     const at = Math.max(0, Math.min(end - start - .05, editorVideo.currentTime - start));
-    editSession.inserts.push({asset: reactionMenu.value, at: Number(at.toFixed(2))});
+    const cue = {asset: reactionMenu.value, at: Number(at.toFixed(2))};
+    if (editSession.cuts.some(cut => cue.at >= cut.at && cue.at < cut.end)) {
+        message("editor-status", "Move the playhead outside the removed section before inserting a reaction.");
+        return;
+    }
+    editSession.inserts.push(cue);
     renderVisualCues();
 });
 
@@ -282,20 +295,29 @@ byId("editor-reaction-file").addEventListener("change", async ({target}) => {
     }
 });
 
-function setSpeechCaptions(captions) {
+function setSpeechCaptions(captions, closeDraft = true) {
     editSession.captions = captions;
-    editSession.captionLines = captions.flatMap(line => {
-        const groups = line.text.match(/\S+(?:\s+\S+){0,6}/g) || [];
+    const bold = byId("editor-caption-style").value === "bold";
+    editSession.captionLines = captions.flatMap((line, sourceIndex) => {
+        const words = line.text.trim().split(/\s+/);
+        const size = bold ? 4 : 7;
+        const groups = Array.from({length: Math.ceil(words.length / size)}, (_, index) =>
+            words.slice(index * size, (index + 1) * size).join(" "));
         const length = (line.end - line.start) / groups.length;
-        return groups.map((text, index) => ({text, start: line.start + index * length, end: line.start + (index + 1) * length}));
+        return groups.map((text, index) => ({text, sourceIndex, start: line.start + index * length, end: line.start + (index + 1) * length}));
     });
+    if (closeDraft) byId("editor-caption-draft").hidden = true;
     byId("editor-clear-captions").hidden = captions.length === 0;
+    byId("editor-generate-captions").textContent = captions.length ? "Regenerate with Whisper" : "Generate with Whisper";
     updateEditorTransport();
     renderEditorTimeline();
 }
 
+byId("editor-caption-style").addEventListener("change", () => setSpeechCaptions(editSession.captions, false));
+
 byId("editor-generate-captions").addEventListener("click", async ({currentTarget}) => {
     const session = editSession;
+    const originalCaptions = session.captions;
     const status = byId("editor-caption-status");
     currentTarget.disabled = true;
     status.textContent = "Whisper is reading the clip audio…";
@@ -303,12 +325,19 @@ byId("editor-generate-captions").addEventListener("click", async ({currentTarget
         const query = new URLSearchParams({revision: session.clip.file_revision || ""});
         const result = await api("/api/edit/" + session.path + "/captions?" + query, {method: "POST"});
         if (editSession !== session) return;
+        if (session.captions !== originalCaptions) {
+            status.textContent = "Captions changed while Whisper was running. Generate again to replace them.";
+            return;
+        }
         clearRenderedPreview();
         setSpeechCaptions(result.captions);
         const first = visibleEditorCaptions()[0];
-        if (first) jumpToEditorCue(first.at, first.end);
+        if (first) {
+            chooseCaption(first.sourceIndex);
+            jumpToEditorCue(first.at, first.end);
+        }
         status.textContent = result.message || (first
-            ? "Showing the first caption in the edited preview. Select a cue to jump to another line."
+            ? "Showing the first caption. Select a line to edit its text or timing."
             : "Speech was found outside this trim. Adjust the trim to include it.");
     } catch (error) {
         if (editSession === session) status.textContent = error.message;

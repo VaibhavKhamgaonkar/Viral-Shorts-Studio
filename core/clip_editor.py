@@ -81,6 +81,11 @@ class PictureRange(PictureSettings):
     end: float = Field(gt=0, allow_inf_nan=False)
 
 
+class RemovedRange(BaseModel):
+    at: float = Field(ge=0, allow_inf_nan=False)
+    end: float = Field(gt=0, allow_inf_nan=False)
+
+
 @dataclass(frozen=True)
 class InsertAsset:
     duration: float
@@ -92,12 +97,19 @@ class ClipEdit(PictureSettings):
     start: float = Field(ge=0, allow_inf_nan=False)
     end: float = Field(gt=0, allow_inf_nan=False)
     ranges: list[PictureRange] = Field(default_factory=list, max_length=8)
+    cuts: list[RemovedRange] = Field(default_factory=list, max_length=12)
+    cut_fade: bool = False
     titles: list[TextCue] = Field(default_factory=list, max_length=8)
     inserts: list[InsertCue] = Field(default_factory=list, max_length=4)
     captions: list[SpeechCaption] = Field(default_factory=list, max_length=1500)
+    caption_style: Literal["clean", "bold"] = "clean"
     source_level: int = Field(default=100, ge=0, le=100)
     music_track: str = Field(default="", max_length=255)
     music_level: int = Field(default=20, ge=0, le=100)
+    music_fade_in: float = Field(default=0, ge=0, le=3, allow_inf_nan=False)
+    music_fade_out: float = Field(default=0, ge=0, le=3, allow_inf_nan=False)
+    duck_music: bool = False
+    clean_voice: bool = False
     cues: list[SoundCue] = Field(default_factory=list, max_length=12)
     save_mode: Literal["version", "replace"] = "version"
     source_revision: str = Field(default="", pattern=r"^\d{0,24}$")
@@ -118,6 +130,19 @@ def validate_timeline(edit, duration):
     if any(cut.at >= duration for cut in edit.inserts):
         raise ValueError("Insert each reaction before the end of the trimmed clip.")
     cursor = 0
+    removed = 0
+    for cut in sorted(edit.cuts, key=lambda item: item.at):
+        if cut.at < cursor or cut.end - cut.at < .099 or cut.end > duration + .005:
+            raise ValueError("Removed sections must be at least 0.1 seconds, inside the trim, and cannot overlap.")
+        if 0 < cut.at - cursor < .049 or 0 < duration - cut.end < .049:
+            raise ValueError("Leave at least 0.05 seconds between removed sections and adjacent trim points.")
+        if any(cut.at <= insert.at < cut.end for insert in edit.inserts):
+            raise ValueError("Move any insert out of the section being removed.")
+        removed += min(cut.end, duration) - cut.at
+        cursor = cut.end
+    if duration - removed < .24:
+        raise ValueError("Keep at least 0.24 seconds of video after removing sections.")
+    cursor = 0
     for picture in sorted(edit.ranges, key=lambda item: item.at):
         if picture.end <= picture.at or picture.end > duration + .002:
             raise ValueError("Picture ranges must start and end inside the trim.")
@@ -128,6 +153,22 @@ def validate_timeline(edit, duration):
 
 def frame_rate(stream):
     return min(120, max(1, float(stream.average_rate or 30)))
+
+
+def edit_duration(edit, assets):
+    length = edit.end - edit.start
+    removed = sum(min(cut.end, length) - cut.at for cut in edit.cuts)
+    return length - removed + sum(assets[insert.asset].duration for insert in edit.inserts)
+
+
+def kept_source_ranges(edit):
+    cursor = 0
+    for cut in sorted(edit.cuts, key=lambda item: item.at):
+        if cut.at > cursor:
+            yield cursor, cut.at
+        cursor = cut.end
+    if edit.end - edit.start > cursor:
+        yield cursor, edit.end - edit.start
 
 
 @lru_cache(maxsize=len(EFFECTS))
@@ -166,7 +207,7 @@ def render_edit(video, output, edit, music, progress, *, inserts=None, preview=F
         fps = frame_rate(stream)
     duration = edit.end - edit.start
     insert_assets = inserts or {}
-    final_duration = duration + sum(insert_assets[cut.asset].duration for cut in edit.inserts)
+    final_duration = edit_duration(edit, insert_assets)
     out_width, out_height = width, height
     if preview and max(width, height) > 480:
         out_width = max(2, round(width * 240 / max(width, height)) * 2)
@@ -183,16 +224,17 @@ def render_edit(video, output, edit, music, progress, *, inserts=None, preview=F
         next_input += 1
         return next_input - 1
 
-    def add_audio(index, level, delay=0):
+    def add_audio(index, level, delay=0, effects=""):
         label = f"mix{index}"
-        chain = f"[{index}:a:0]aresample=48000,aformat=channel_layouts=stereo,volume={level / 100}"
+        chain = f"[{index}:a:0]aresample=48000,aformat=channel_layouts=stereo{effects},volume={level / 100}"
         if delay:
             chain += f",adelay={delay}:all=1"
         filters.append(chain + f"[{label}]")
         audio.append(f"[{label}]")
 
     if has_audio and edit.source_level:
-        add_audio(0, edit.source_level)
+        cleanup = ",highpass=f=75,afftdn=nr=9:nf=-40" if edit.clean_voice else ""
+        add_audio(0, edit.source_level, effects=cleanup)
     music_index = add_input(music, "-stream_loop", "-1", "-t", str(final_duration)) if music and edit.music_level else None
     with TemporaryDirectory(dir=output.parent) as scratch:
         scratch = Path(scratch)
@@ -209,7 +251,8 @@ def render_edit(video, output, edit, music, progress, *, inserts=None, preview=F
             graphics.append("ass=titles.ass")
         if edit.captions:
             generate_ass_subtitles([caption.model_dump() for caption in edit.captions],
-                                   edit.start, edit.end, scratch / "speech.ass", caption_style="clean")
+                                   edit.start, edit.end, scratch / "speech.ass", caption_style=edit.caption_style,
+                                   caption_color="#DDF76D")
             graphics.append("ass=speech.ass")
         geometry = (width, height, out_width, out_height)
         if edit.ranges:
@@ -219,13 +262,24 @@ def render_edit(video, output, edit, music, progress, *, inserts=None, preview=F
         if graphics:
             filters.append(video_label + ",".join(graphics) + "[graphics]")
             video_label = "[graphics]"
-        if edit.inserts:
+        if edit.inserts or edit.cuts:
             has_mix = bool(audio or music_index is not None or any(asset.has_audio for asset in insert_assets.values()))
-            video_label, expanded_audio = concat_inserts(filters, add_input, video_label, audio, has_mix,
-                                                         edit, insert_assets, scratch, out_width, out_height)
+            video_label, expanded_audio = compose_timeline(filters, add_input, video_label, audio, has_mix,
+                                                            edit, insert_assets, scratch, out_width, out_height, fps)
             audio = [expanded_audio] if has_mix else []
         if music_index is not None:
-            add_audio(music_index, edit.music_level)
+            fade_in = min(edit.music_fade_in, final_duration / 2)
+            fade_out = min(edit.music_fade_out, final_duration / 2)
+            fades = f",afade=t=in:d={fade_in:.6f}" if fade_in else ""
+            if fade_out:
+                fades += f",afade=t=out:st={final_duration - fade_out:.6f}:d={fade_out:.6f}"
+            add_audio(music_index, edit.music_level, effects=fades)
+            if edit.duck_music and len(audio) > 1:
+                music_label = audio.pop()
+                filters.append(mix_audio(audio) + "apad,asplit=2[foreground][duck_trigger]")
+                filters.append(music_label + "[duck_trigger]sidechaincompress=threshold=0.025:ratio=8:"
+                               "attack=20:release=280[ducked_music]")
+                audio = ["[foreground]", "[ducked_music]"]
         if audio:
             filters.append(mix_audio(audio) + "alimiter=limit=0.95:level=0:latency=1,apad[audio]")
         if filters:
@@ -317,21 +371,26 @@ def render_picture_ranges(edit, duration, fps, geometry, filters, add_input, scr
     return "[picture_timeline]"
 
 
-def concat_inserts(filters, add_input, video, audio, has_mix, edit, assets, scratch, width, height):
+def compose_timeline(filters, add_input, video, audio, has_mix, edit, assets, scratch, width, height, fps):
     duration = edit.end - edit.start
     timeline = []
     cursor = 0
-    for cut in sorted(edit.inserts, key=lambda cue: cue.at):
-        if cut.at > cursor:
-            timeline.append((cursor, cut.at, None))
-        timeline.append((0, assets[cut.asset].duration, cut.asset))
-        cursor = cut.at
+    events = sorted([(cut.at, cut.end, None) for cut in edit.cuts] +
+                    [(insert.at, insert.at, insert.asset) for insert in edit.inserts], key=lambda item: item[0])
+    for at, end, asset in events:
+        if at > cursor:
+            timeline.append((cursor, at, None))
+        if asset:
+            timeline.append((0, assets[asset].duration, asset))
+        cursor = end
     if duration > cursor:
         timeline.append((cursor, duration, None))
     source_parts = sum(asset is None for _, _, asset in timeline)
     video_feeds = [f"[sourcev{number}]" for number in range(source_parts)]
     audio_feeds = [f"[sourcea{number}]" for number in range(source_parts)]
-    normalization = "fps=30,setsar=1,format=yuv420p"
+    normalization = f"fps={fps:.8f},setsar=1,format=yuv420p"
+    fade_in_at = {cut.end for cut in edit.cuts if cut.at > 0}
+    fade_out_at = {cut.at for cut in edit.cuts if cut.end < duration}
     video_split = f",split={source_parts}" if source_parts > 1 else ""
     filters.append(video + normalization + video_split + "".join(video_feeds))
     silence = "anullsrc=r=48000:cl=stereo"
@@ -361,12 +420,24 @@ def concat_inserts(filters, add_input, video, audio, has_mix, edit, assets, scra
             audio_source = f"[{index}:a:0]{stereo},apad," if asset.has_audio else None
         video_label = f"[segmentv{number}]"
         # Input labels feed their first filter directly. The insert chain already ends in a separator.
-        filters.append(f"{video_source}trim=start={start}:end={end},setpts=PTS-STARTPTS{video_label}")
+        picture = f"{video_source}trim=start={start}:end={end},setpts=PTS-STARTPTS"
+        if edit.cut_fade and name is None:
+            fade = min(.12, length / 3)
+            if start in fade_in_at:
+                picture += f",fade=t=in:d={fade:.6f}"
+            if end in fade_out_at:
+                picture += f",fade=t=out:st={length - fade:.6f}:d={fade:.6f}"
+        filters.append(picture + video_label)
         segments.append(video_label)
         if has_mix:
             audio_label = f"[segmenta{number}]"
             chain = f"{audio_source}atrim=start={start}:duration={length}" if audio_source else f"{silence},atrim=duration={length}"
-            filters.append(f"{chain},asetpts=PTS-STARTPTS{audio_label}")
+            chain += ",asetpts=PTS-STARTPTS"
+            if name is None and start in fade_in_at:
+                chain += ",afade=t=in:d=0.008"
+            if name is None and end in fade_out_at:
+                chain += f",afade=t=out:st={length - .008:.6f}:d=0.008"
+            filters.append(chain + audio_label)
             segments.append(audio_label)
     video_out = "[joined_video]"
     audio_out = "[joined_audio]" if has_mix else ""
