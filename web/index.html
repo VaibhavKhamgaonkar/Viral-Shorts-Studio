@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#241b29">
+    <title>Viral Shorts Studio</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23ddf76d'/%3E%3Cpath d='M10 22 22 10' stroke='%23241b29' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+    <link rel="stylesheet" href="/studio/studio.css">
+    <script src="/studio/studio.js" defer></script>
+</head>
+<body>
+<svg xmlns="http://www.w3.org/2000/svg" class="icon-sprite" aria-hidden="true">
+    <symbol id="i-cut" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 15 15 9M9 9h1m4 6h1"/></symbol>
+    <symbol id="i-film" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 5v14M17 5v14M3 10h4m10 0h4M3 14h4m10 0h4"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="10" cy="17" r="2"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a4 4 0 0 0 6 0l4-4a4 4 0 0 0-6-6l-2 2m2 6a4 4 0 0 0-6 0l-4 4a4 4 0 0 0 6 6l2-2"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4m-5 5 5-5 5 5M4 16v4h16v-4"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M4 12h15m-6-6 6 6-6 6"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14-5L4 8m0-5v5h5M4 13a8 8 0 0 0 14 5l2-2m0 5v-5h-5"/></symbol>
+    <symbol id="i-drive" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 13h18m-5 2.5h2m-6 0h1"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7z"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3c0 6-3 9-9 9 6 0 9 3 9 9 0-6 3-9 9-9-6 0-9-3-9-9Z"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 16v4h16v-4"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 4H6a2 2 0 0 0-2 2v10"/></symbol>
+    <symbol id="i-music" viewBox="0 0 24 24"><path d="M9 17V5l10-2v12M9 8l10-2"/><ellipse cx="6" cy="17" rx="3" ry="2.5"/><ellipse cx="16" cy="15" rx="3" ry="2.5"/></symbol>
+</svg>
+
+<a class="skip" href="#main">Skip to workspace</a>
+<aside class="sidebar">
+    <a class="brand" href="/" aria-label="Viral Shorts Studio home">
+        <span class="brand-mark"><svg class="icon"><use href="#i-cut"/></svg></span>
+        <span>Viral Shorts<br><small>STUDIO</small></span>
+    </a>
+    <nav aria-label="Workspace">
+        <a href="/" data-nav="studio"><svg class="icon"><use href="#i-cut"/></svg> Create clips</a>
+        <a href="/library" data-nav="library"><svg class="icon"><use href="#i-film"/></svg> Clip library</a>
+        <a href="/settings" data-nav="settings"><svg class="icon"><use href="#i-settings"/></svg> Settings</a>
+    </nav>
+    <a href="/settings#local-ai" class="engine">
+        <span class="engine-status"><span id="ai-dot" class="status-dot"></span><span id="ai-status">Checking local AI</span></span>
+        <small id="ai-model">Ollama</small>
+    </a>
+</aside>
+
+<main id="main" class="main" tabindex="-1">
+    <header class="topbar">
+        <div><span class="top-home">Workspace</span> <span class="top-slash">/</span> <span id="breadcrumb">Create clips</span></div>
+        <button class="button button-plain cache-button" id="cache-button" type="button"><svg class="icon"><use href="#i-drive"/></svg> <span id="cache-label">Download cache</span></button>
+    </header>
+    <div class="workspace">
+        <header class="page-heading">
+            <h1 id="page-title">Create clips</h1>
+            <p id="page-description">Find the best moments in a long video and export them as vertical clips.</p>
+        </header>
+
+        <div id="clip-workspace" class="workspace-grid">
+            <section class="panel create-panel" id="create-panel" aria-labelledby="source-title">
+                <form id="create-form">
+                    <h2 id="source-title">Video source</h2>
+                    <div class="segmented" aria-label="Video source type" role="group">
+                        <button type="button" id="source-url" aria-pressed="true"><svg class="icon"><use href="#i-link"/></svg> YouTube link</button>
+                        <button type="button" id="source-upload" aria-pressed="false"><svg class="icon"><use href="#i-upload"/></svg> Upload video</button>
+                    </div>
+                    <div id="url-panel" class="field">
+                        <label for="youtube-url">YouTube URL</label>
+                        <input type="url" id="youtube-url" placeholder="https://www.youtube.com/watch?v=…" required>
+                    </div>
+                    <div id="upload-panel" class="field" hidden>
+                        <label for="video-file">Video file</label>
+                        <input type="file" id="video-file" accept=".mp4,.mov,.mkv,.webm,.m4v">
+                        <small>MP4, MOV, MKV, WebM or M4V</small>
+                    </div>
+
+                    <div class="form-divider"></div>
+                    <h2>Clip settings</h2>
+                    <div class="field">
+                        <label for="selection">How to find clips</label>
+                        <select id="selection"><option value="highlights">Find highlights automatically</option><option value="range">Use an exact time range</option></select>
+                    </div>
+                    <div id="range-options" class="field-grid" hidden>
+                        <div class="field"><label for="clip-start">Start</label><input id="clip-start" placeholder="00:01:20"><small>hh:mm:ss or seconds</small></div>
+                        <div class="field"><label for="clip-end">End</label><input id="clip-end" placeholder="00:02:00"><small>Up to 10 minutes per clip</small></div>
+                    </div>
+                    <div class="field-grid">
+                        <div class="field" id="length-options">
+                            <label for="clip-length">Clip length</label>
+                            <select id="clip-length"><option value="short">20–60 sec</option><option value="extended">1–3 min</option><option value="long">3–10 min</option></select>
+                        </div>
+                        <div class="field">
+                            <label for="layout">Video layout</label>
+                            <select id="layout"><option value="smart_blur">Blurred background</option><option value="vertical_crop">Center crop</option><option value="split_screen">Gameplay split screen</option></select>
+                        </div>
+                    </div>
+                    <details class="job-options">
+                        <summary>More clip options</summary>
+                        <label class="check"><input id="mirror" type="checkbox"> Mirror horizontally</label>
+                        <label class="check"><input id="color-grade" type="checkbox"> Boost color and contrast</label>
+                        <label class="check"><input id="audio-speed" type="checkbox"> Play at 1.04× speed</label>
+                        <label class="check"><input id="auto-delete" type="checkbox"> Clear the local source copy after export</label>
+                    </details>
+                    <button id="generate" class="button button-primary generate-button" type="submit"><svg class="icon"><use href="#i-spark"/></svg> Generate clips <svg class="icon end-icon"><use href="#i-arrow"/></svg></button>
+                    <p id="form-message" class="form-message" role="alert" hidden></p>
+                </form>
+            </section>
+
+            <section class="library" aria-labelledby="library-title">
+                <div class="library-header">
+                    <div><h2 id="library-title">Clip library</h2><p id="clip-count" aria-live="polite">Loading clips…</p></div>
+                    <button class="button button-outline" type="button" id="refresh"><svg class="icon"><use href="#i-refresh"/></svg> Refresh</button>
+                </div>
+                <section class="job-progress" id="job-progress" aria-live="polite" hidden>
+                    <span class="job-indicator" id="job-indicator"></span>
+                    <div><strong id="job-stage"></strong><p id="job-detail"></p></div>
+                </section>
+                <div id="library-empty" class="library-empty" hidden>
+                    <div class="empty-art" aria-hidden="true">
+                        <div class="art-grid"></div>
+                        <div class="art-frame art-frame-left"></div>
+                        <div class="art-frame art-frame-right"></div>
+                        <div class="art-frame art-frame-center"><span class="art-corner"></span><span class="art-play"><svg class="icon"><use href="#i-play"/></svg></span><span class="art-lines"></span></div>
+                    </div>
+                    <h3>No clips yet</h3>
+                    <p>Add a video and generate your first batch. Your clips and posting copy will appear here.</p>
+                    <a class="empty-link" href="/" id="start-link">Create a clip <svg class="icon"><use href="#i-arrow"/></svg></a>
+                </div>
+                <div id="clip-batches" class="batches"></div>
+                <p id="library-message" class="form-message" role="alert" hidden></p>
+            </section>
+        </div>
+
+        <form id="settings-form" class="settings-grid" hidden>
+            <section class="panel settings-panel" aria-labelledby="branding-title">
+                <h2 id="branding-title">Brand &amp; captions</h2>
+                <p class="section-copy">Apply a consistent look to new exports.</p>
+                <div class="field"><label for="brand-name">On-video label</label><input id="brand-name" name="brand_name" maxlength="30" placeholder="Your channel name"></div>
+                <div class="field-grid">
+                    <div class="field"><label for="caption-style">Caption style</label><select id="caption-style" name="caption_style"><option value="bold">Bold highlight</option><option value="clean">Clean white</option></select></div>
+                    <div class="field"><label for="caption-color">Brand accent</label><input id="caption-color" name="caption_color" type="color" value="#DDF76D"></div>
+                </div>
+                <label class="check"><input type="checkbox" name="captions"> Burn in captions</label>
+                <label class="check"><input type="checkbox" name="opening_hook"> Show opening text for the first three seconds</label>
+            </section>
+
+            <section class="panel settings-panel" id="local-ai" aria-labelledby="defaults-title">
+                <h2 id="defaults-title">Clip defaults</h2>
+                <p class="section-copy">Set the starting point for each new job.</p>
+                <div class="field"><label for="model">Ollama model</label><input name="llm_model" id="model" maxlength="100" required></div>
+                <div class="field-grid">
+                    <div class="field"><label for="default-layout">Video layout</label><select name="default_mode" id="default-layout"><option value="smart_blur">Blurred background</option><option value="vertical_crop">Center crop</option><option value="split_screen">Gameplay split screen</option></select></div>
+                    <div class="field"><label for="default-length">Clip length</label><select name="clip_length" id="default-length"><option value="short">20–60 sec</option><option value="extended">1–3 min</option><option value="long">3–10 min</option></select></div>
+                </div>
+                <div class="field"><label for="clip-count-pref">Clips per highlight job</label><input id="clip-count-pref" name="max_clips_to_generate" type="number" min="1" max="6" required></div>
+                <label class="check"><input type="checkbox" name="auto_delete_source"> Clear the local source copy after export</label>
+            </section>
+
+            <section class="panel settings-panel" aria-labelledby="music-title">
+                <h2 id="music-title">Audio &amp; music</h2>
+                <p class="section-copy">Qwen drafts a music brief and can recommend a track from your library.</p>
+                <div class="field"><label for="music-mode">Export audio</label><select id="music-mode" name="music_mode"><option value="original">Keep source audio</option><option value="mute">Mute source audio</option><option value="replace">Replace with a library track</option><option value="ai_replace">Replace when AI recommends a track</option></select><small>Replacing audio removes the original soundtrack, including speech.</small></div>
+                <div class="field" id="music-track-field" hidden><label for="music-track">Replacement track</label><select id="music-track" name="music_track"></select></div>
+                <div class="field">
+                    <label for="music-file">Add a track you have permission to use</label>
+                    <div class="upload-row"><input type="file" id="music-file" accept=".mp3,.wav,.m4a,.aac,.flac,.ogg"><button class="button button-outline" id="add-music" type="button">Add track</button></div>
+                    <small id="music-library-count" aria-live="polite"></small>
+                </div>
+            </section>
+
+            <section class="panel settings-panel" aria-labelledby="publish-title">
+                <h2 id="publish-title">Publishing destinations</h2>
+                <p class="section-copy">Save accounts for a future publishing connection. Account authorization and uploads are pending.</p>
+                <div class="destination"><div class="field"><label for="youtube-account">YouTube channel</label><input id="youtube-account" maxlength="150" placeholder="@channel"></div><label class="check"><input type="checkbox" id="youtube-enabled"> Include</label></div>
+                <div class="destination"><div class="field"><label for="instagram-account">Instagram profile</label><input id="instagram-account" maxlength="150" placeholder="@profile"></div><label class="check"><input type="checkbox" id="instagram-enabled"> Include</label></div>
+                <div class="destination"><div class="field"><label for="facebook-account">Facebook Page</label><input id="facebook-account" maxlength="150" placeholder="Page name or ID"></div><label class="check"><input type="checkbox" id="facebook-enabled"> Include</label></div>
+            </section>
+
+            <div class="settings-actions"><button id="save-settings" class="button button-primary" type="submit">Save settings <svg class="icon"><use href="#i-arrow"/></svg></button><p id="settings-message" class="form-message" role="status" hidden></p></div>
+        </form>
+    </div>
+</main>
+
+<dialog id="detail-dialog" aria-labelledby="dialog-title">
+    <div class="dialog-header"><h2 id="dialog-title"></h2><form method="dialog"><button class="button button-outline icon-button" aria-label="Close dialog"><svg class="icon"><use href="#i-close"/></svg></button></form></div>
+    <div id="dialog-content"></div>
+</dialog>
+<p id="toast" class="toast" aria-live="polite" hidden></p>
+</body>
+</html>

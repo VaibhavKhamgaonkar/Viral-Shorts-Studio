@@ -1,0 +1,30 @@
+# Python runtimes and caches
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local workspace and generated files
+/bin/
+/downloads/
+/uploads/
+/output_clips/
+/assets/fonts/
+/assets/gameplay/
+/assets/music/
+/playwright-report/
+/test-results/
+/.playwright-cli/
+/.agents/
+/.codex/
+
+# Machine-specific settings and secrets
+/config/settings.json
+.env
+.env.*
+client_secret*.json
+credentials*.json
+token*.json
+*.pem
+*.key
