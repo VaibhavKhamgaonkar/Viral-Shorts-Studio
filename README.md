@@ -55,6 +55,8 @@ Use **Regenerate draft** to refresh an existing kit without re-rendering the MP4
 
 Use the search above the exports on **Create clips** or **Clip library** to find a task ID, clip title, caption, hashtag, or saved spoken phrase. **Filters** narrows results by source, clip selection method, or export date and time in your browser’s local time zone. Sort by export time or source title. The page controls show 3 batches by default and offer 6 and 12 when there are more results. When a keyword matches individual clips, the results show those clips under their batch.
 
+Batches with more than five clips use a horizontal strip. Swipe, use the scrollbar, or select the arrow buttons below the clips to see the rest.
+
 For YouTube videos with usable captions, the studio scans the transcript in overlapping windows and asks yt-dlp for selected ranges. If a range request fails it can use a full download. Highlights depend on spoken content and the available transcript. Use an exact range for a moment you already know.
 
 One job runs at a time to share local resources. The form blocks a repeat submission while an identical job is waiting or running. Change the clip options or source to queue a different job. The Tasks drawer shows queue wait, processing time, and individual stage timings. Jobs created before timing was added have no historical durations. If the studio is interrupted, a failed task's recorded time ends at its last recorded update.
@@ -74,6 +76,12 @@ The studio uses NVIDIA H.264 encoding when available and falls back to CPU encod
 **Publishing destinations** saves YouTube channel, Instagram profile, and Facebook Page details on this machine. **Future default** records which accounts you want preselected when direct uploads are available. Account connection and automatic uploads are unavailable in this version.
 
 For now, open **Clip library**, download the **MP4**, and use the **AI posting kit** to copy the title or caption. Then upload through [YouTube Studio](https://studio.youtube.com/), [Instagram](https://www.instagram.com/), or [Meta Business Suite](https://business.facebook.com/). Direct uploads will require the studio to implement YouTube authorization and the relevant Meta publishing permissions. [YouTube upload API](https://developers.google.com/youtube/data/guides/uploading_a_video) · [Instagram publishing](https://developers.facebook.com/documentation/instagram-platform/content-publishing) · [Facebook Page Reels](https://developers.facebook.com/documentation/video-api/guides/reels-publishing)
+
+### YouTube direct-upload pilot
+
+The first integration can upload one selected export as **Private**, then open it in YouTube Studio for review. It requires a Google Cloud project with **YouTube Data API v3** enabled, a **Desktop app** OAuth client, and browser consent from the channel owner. If the OAuth app is in testing, add the owner's Google account as a test user. Store the credentials and tokens locally. [Google desktop authorization](https://developers.google.com/identity/protocols/oauth2/native-app)
+
+The app would show the authorized channel, let you review the MP4, title, description, and audience setting, and upload via `videos.insert` with privacy explicitly set to `private`. Use a resumable upload and save the returned video ID so you can open the same upload in Studio. Confirm the channel, playback, and visibility there before publishing. [Upload endpoint](https://developers.google.com/youtube/data/reference/rest/v3/videos/insert) · [Resumable uploads](https://developers.google.com/youtube/data/guides/using_resumable_upload_protocol)
 
 ### Footage and music rights
 

@@ -90,7 +90,7 @@ html[data-nav-collapsed="true"] .engine small { display: none; }
 .page-heading { margin-bottom: 31px; }
 .page-heading h1 { font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif; font-weight: 750; font-size: clamp(2.6rem, 4.5vw, 4.3rem); letter-spacing: -.072em; line-height: 1; }
 .page-heading p { margin-top: 13px; color: var(--muted); font-size: clamp(.9rem, 1.4vw, 1.04rem); }
-.workspace-grid { display: grid; grid-template-columns: clamp(350px, 36%, 660px) minmax(0, 1fr); align-items: start; gap: clamp(18px, 2vw, 32px); }
+.workspace-grid { display: grid; grid-template-columns: minmax(300px, 3fr) minmax(0, 7fr); align-items: start; gap: clamp(18px, 2vw, 32px); }
 .workspace-grid.library-only { display: block; }
 
 .panel { background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); padding: clamp(16px, 2vw, 25px); min-width: 0; box-shadow: 3px 5px 15px #38293d12, -3px -3px 11px #fffdf9; }
@@ -265,7 +265,33 @@ input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: var
 .batch-meta { margin-top: 4px; font-size: .76rem; color: var(--muted); overflow-wrap: anywhere; }
 .batch-toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 13px; }
 .batch-toolbar .button { font-size: .76rem; min-height: 32px; padding: 4px 7px; }
-.batch-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(155px, 100%), 1fr)); gap: 10px; }
+.batch-grid {
+    --clip-gap: 10px;
+    --clip-width: max(min(155px, 100%), calc((100% - 4 * var(--clip-gap)) / 5));
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(var(--clip-width), 1fr));
+    gap: var(--clip-gap);
+}
+.batch-grid-scroll {
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: var(--clip-width);
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    scrollbar-width: thin;
+    scrollbar-color: #9b8b9d var(--canvas);
+    padding-bottom: 6px;
+}
+.batch-grid-scroll .clip { scroll-snap-align: start; }
+.batch-clip-scroll { display: flex; align-items: center; gap: 5px; margin-inline-start: auto; }
+.batch-clip-scroll .button { min-width: 44px; min-height: 44px; padding: 6px; }
+.batch-clip-scroll .button:first-child .icon { transform: rotate(90deg); }
+.batch-clip-scroll .button:last-child .icon { transform: rotate(-90deg); }
+.batch-clip-scroll .button[aria-disabled="true"] { color: var(--muted); opacity: .5; cursor: default; background: transparent; }
+@media (prefers-reduced-motion: no-preference) {
+    .batch-grid-scroll { scroll-behavior: smooth; }
+}
 .clip { min-width: 0; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
 .clip video { display: block; background: var(--plum); object-fit: contain; width: 100%; height: clamp(180px, 25vw, 280px); }
 .clip-body { display: grid; gap: 6px; padding: 10px; overflow-wrap: anywhere; }

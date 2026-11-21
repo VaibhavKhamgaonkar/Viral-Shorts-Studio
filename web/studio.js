@@ -332,6 +332,16 @@ function clipCard(clip, folder) {
     return card;
 }
 
+function updateClipScroll(grid) {
+    const [previous, next] = grid.parentElement.querySelector(".batch-clip-scroll").children;
+    previous.setAttribute("aria-disabled", String(grid.scrollLeft < 1));
+    next.setAttribute("aria-disabled", String(grid.scrollWidth - grid.clientWidth - grid.scrollLeft < 1));
+}
+
+const clipStripResize = new ResizeObserver((entries) => {
+    for (const {target} of entries) updateClipScroll(target);
+});
+
 function batchCard(batch) {
     const card = element("article", "batch");
     card.id = "batch-" + batch.task_id;
@@ -371,6 +381,28 @@ function batchCard(batch) {
                 await Promise.all([loadTasks(), refreshQueueAfterRemoval(batch.task_id)]);
             }))
     );
+    if (batch.clips.length > 5) {
+        grid.classList.add("batch-grid-scroll");
+        grid.id = card.id + "-clips";
+        grid.tabIndex = 0;
+        grid.setAttribute("role", "region");
+        grid.setAttribute("aria-label", "Clips from " + batch.source_title);
+        const navigation = element("div", "batch-clip-scroll");
+        for (const [direction, label] of [[-1, "Previous clips"], [1, "Next clips"]]) {
+            const control = action("", ({currentTarget}) => {
+                if (currentTarget.getAttribute("aria-disabled") === "true") return;
+                const step = grid.children[1].offsetLeft - grid.children[0].offsetLeft;
+                grid.scrollBy({left: direction * step});
+            }, "chevron");
+            control.setAttribute("aria-label", label);
+            control.title = label;
+            control.setAttribute("aria-controls", grid.id);
+            navigation.append(control);
+        }
+        buttons.append(navigation);
+        grid.addEventListener("scroll", () => updateClipScroll(grid), {passive: true});
+        clipStripResize.observe(grid);
+    }
     card.append(heading, grid, buttons);
     return card;
 }
@@ -423,6 +455,7 @@ async function loadTasks({moveFocus = false} = {}) {
         byId("clip-count").textContent = count + label + (count === 1 ? "" : "s");
         byId("library-empty").hidden = data.total_clips !== 0 || Boolean(query || filterCount);
         byId("library-no-matches").hidden = count !== 0 || !query && !filterCount;
+        clipStripResize.disconnect();
         results.replaceChildren(...data.batches.map(batchCard));
         byId("library-page-size").hidden = data.total_batches <= 3 && fields.get("size") === "3";
         byId("library-pagination").hidden = data.pages <= 1;
