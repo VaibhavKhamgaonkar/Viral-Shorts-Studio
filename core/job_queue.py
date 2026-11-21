@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS jobs (
 )
 """
 
-PUBLIC_FIELDS = "job_id, source, status, phase, stage, detail, progress, activity, clip_count"
+PUBLIC_FIELDS = "job_id, source, status, phase, stage, detail, progress, activity, clip_count, finished_at"
 
 
 class JobQueue:

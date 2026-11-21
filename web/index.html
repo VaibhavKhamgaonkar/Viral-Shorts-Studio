@@ -8,7 +8,7 @@
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23ddf76d'/%3E%3Cpath d='M10 22 22 10' stroke='%23241b29' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
     <link rel="stylesheet" href="/studio/studio.css">
     <script src="/studio/studio.js" defer></script>
-    <script src="/studio/task-tracker.js" defer></script>
+    <script src="/studio/task-notifications.js" defer></script>
     <script src="/studio/queue.js" defer></script>
 </head>
 <body>
@@ -46,6 +46,10 @@
     <nav id="workspace-nav" aria-label="Workspace">
         <a href="/" data-nav="studio" aria-label="Create clips" title="Create clips"><svg class="icon"><use href="#i-cut"/></svg><span class="nav-label">Create clips</span></a>
         <a href="/library" data-nav="library" aria-label="Clip library" title="Clip library"><svg class="icon"><use href="#i-film"/></svg><span class="nav-label">Clip library</span></a>
+        <button type="button" id="tasks-button" aria-label="Tasks" aria-haspopup="dialog" aria-controls="tasks-drawer" title="Tasks">
+            <svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg>
+            <span class="nav-label">Tasks</span><span class="tasks-count" id="tasks-count" aria-hidden="true" hidden></span>
+        </button>
         <a href="/settings" data-nav="settings" aria-label="Settings" title="Settings"><svg class="icon"><use href="#i-settings"/></svg><span class="nav-label">Settings</span></a>
     </nav>
     <a href="/settings#local-ai" class="engine" aria-label="Local AI settings">
@@ -58,31 +62,7 @@
     <header class="topbar">
         <div class="topbar-row">
             <div class="topbar-breadcrumb"><span class="top-home">Workspace</span> <span class="top-slash">/</span> <span id="breadcrumb">Create clips</span></div>
-            <div class="topbar-actions">
-                <details id="task-tracker" class="task-tracker">
-                    <summary aria-label="Task progress" aria-describedby="tracker-stage tracker-meta">
-                        <span class="tracker-stage" id="tracker-stage">Task progress</span>
-                        <span class="tracker-chevron" aria-hidden="true"></span>
-                        <span class="tracker-meta" id="tracker-meta">Checking queue…</span>
-                        <span class="tracker-bar" id="tracker-bar" aria-hidden="true"></span>
-                    </summary>
-                    <div class="tracker-popover">
-                        <h2>Task progress</h2>
-                        <div id="tracker-detail"></div>
-                        <a id="tracker-queue-link" class="button button-outline" href="/library#task-queue">
-                            Open task queue <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg>
-                        </a>
-                    </div>
-                </details>
-                <button class="button button-plain cache-button" id="cache-button" type="button"><svg class="icon"><use href="#i-drive"/></svg> <span id="cache-label">Download cache</span></button>
-            </div>
-        </div>
-        <div class="queue-flash" id="queue-flash" hidden>
-            <div><strong id="queue-flash-title"></strong><p id="queue-flash-detail"></p></div>
-            <a id="queue-flash-link" class="button button-outline" href="/library#task-queue">Open queue</a>
-            <button id="dismiss-queue-flash" class="button button-plain icon-button" type="button" aria-label="Dismiss task notification">
-                <svg class="icon" aria-hidden="true"><use href="#i-close"/></svg>
-            </button>
+            <button class="button button-plain cache-button" id="cache-button" type="button"><svg class="icon"><use href="#i-drive"/></svg> <span id="cache-label">Download cache</span></button>
         </div>
     </header>
     <div class="workspace">
@@ -153,7 +133,8 @@
                         </div>
                     </fieldset>
                     <button id="generate" class="button button-primary generate-button" type="submit"><svg class="icon"><use href="#i-spark"/></svg> Queue clips <svg class="icon end-icon"><use href="#i-arrow"/></svg></button>
-                    <p id="form-message" class="form-message" role="alert" hidden></p>
+                    <p id="form-message" class="form-message" role="status" hidden></p>
+                    <button class="button button-outline queued-task-link" id="view-submitted-task" type="button" hidden>View task <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></button>
                 </form>
             </section>
 
@@ -162,16 +143,6 @@
                     <div><h2 id="library-title">Clip library</h2><p id="clip-count" aria-live="polite">Loading clips…</p></div>
                     <button class="button button-outline" type="button" id="refresh"><svg class="icon"><use href="#i-refresh"/></svg> Refresh</button>
                 </div>
-                <section class="queue-panel" id="task-queue" aria-labelledby="queue-title" tabindex="-1">
-                    <div class="queue-heading"><h3 id="queue-title">Task queue</h3><p id="queue-summary">Checking queue…</p></div>
-                    <div id="queue-active" class="queue-list"></div>
-                    <div id="queue-latest" class="queue-list"></div>
-                    <details class="queue-history" id="queue-history" hidden>
-                        <summary>Earlier jobs</summary>
-                        <div id="queue-past" class="queue-list"></div>
-                    </details>
-                    <p id="queue-error" class="form-message" role="alert" hidden></p>
-                </section>
                 <div id="library-empty" class="library-empty" hidden>
                     <div class="empty-art" aria-hidden="true">
                         <div class="art-grid"></div>
@@ -240,10 +211,39 @@
     </div>
 </main>
 
+<dialog id="tasks-drawer" class="tasks-drawer" aria-labelledby="tasks-title">
+    <header class="tasks-drawer-header">
+        <div><h2 id="tasks-title">Tasks</h2><p id="queue-summary">Checking tasks…</p></div>
+        <form method="dialog"><button class="button button-outline icon-button" type="submit" aria-label="Close tasks" autofocus><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></form>
+    </header>
+    <div class="tasks-drawer-body">
+        <p id="queue-error" class="queue-error" role="status" hidden></p>
+        <section id="queue-empty" class="queue-empty" hidden>
+            <svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg>
+            <h3>No tasks yet</h3><p>Jobs appear here after you queue a video.</p>
+        </section>
+        <section id="queue-active-section" class="queue-group" aria-labelledby="queue-active-title" hidden>
+            <h3 id="queue-active-title">In progress &amp; waiting</h3>
+            <div id="queue-active" class="queue-list"></div>
+        </section>
+        <section id="queue-recent-section" class="queue-group" aria-labelledby="queue-recent-title" hidden>
+            <h3 id="queue-recent-title">Recent</h3>
+            <div id="queue-recent" class="queue-list"></div>
+        </section>
+    </div>
+</dialog>
 <dialog id="detail-dialog" aria-labelledby="dialog-title">
     <div class="dialog-header"><h2 id="dialog-title"></h2><form method="dialog"><button class="button button-outline icon-button" aria-label="Close dialog"><svg class="icon"><use href="#i-close"/></svg></button></form></div>
     <div id="dialog-content"></div>
 </dialog>
+<div class="queue-flash" id="queue-flash" hidden>
+    <div><strong id="queue-flash-title"></strong><p id="queue-flash-detail"></p></div>
+    <a id="queue-flash-link" class="button button-outline" href="/library" hidden>View clips</a>
+    <button id="queue-flash-details" class="button button-outline" type="button" hidden>View details</button>
+    <button id="dismiss-queue-flash" class="button button-plain icon-button" type="button" aria-label="Dismiss task notification">
+        <svg class="icon" aria-hidden="true"><use href="#i-close"/></svg>
+    </button>
+</div>
 <p id="toast" class="toast" aria-live="polite" hidden></p>
 <p id="queue-announcement" class="sr-only" role="status"></p>
 </body>

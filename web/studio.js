@@ -206,6 +206,7 @@ function formatTime(value) {
 async function startJob(event) {
     event.preventDefault();
     byId("generate").disabled = true;
+    byId("view-submitted-task").hidden = true;
     message("form-message");
     const request = {
         source_type: sourceType,
@@ -247,7 +248,10 @@ async function startJob(event) {
             request.url = byId("youtube-url").value.trim();
         }
         const job = await api("/api/generate", jsonRequest("POST", request));
-        message("form-message", "Task " + job.job_id + " added to the queue.", true);
+        message("form-message", "Queued · #" + job.job_id, true);
+        const viewTask = byId("view-submitted-task");
+        viewTask.onclick = () => openTasks(job.job_id);
+        viewTask.hidden = false;
         if (request.auto_delete_source) savedUpload = null;
         trackSubmittedJob(job.job_id);
     } catch (error) {

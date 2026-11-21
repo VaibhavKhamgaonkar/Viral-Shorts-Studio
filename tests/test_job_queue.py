@@ -55,7 +55,9 @@ class JobQueueTests(unittest.TestCase):
                 with self.assertLogs("core.job_queue", level="ERROR"):
                     release.set()
                     self.assertEqual(self.wait_for_status(queue, first, "failed")["detail"], "Bad source")
-                self.assertEqual(self.wait_for_status(queue, second, "completed")["clip_count"], 2)
+                completed = self.wait_for_status(queue, second, "completed")
+                self.assertEqual(completed["clip_count"], 2)
+                self.assertGreater(completed["finished_at"], 0)
                 self.wait_for_status(queue, third, "completed")
                 self.assertEqual(processed, [first, second, third])
                 self.assertEqual(queue.get(first)["activity"][0]["stage"], "Rendering clip")
