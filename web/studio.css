@@ -25,6 +25,7 @@ html[data-nav-collapsed="true"] { --rail: 76px; }
 
 *, *::before, *::after { box-sizing: border-box; }
 [hidden] { display: none !important; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 body { margin: 0; min-width: 280px; }
 button, input, select { font: inherit; }
 button, a, summary, select, input[type="checkbox"], input[type="color"] { cursor: pointer; }
@@ -152,12 +153,35 @@ input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: var
 .art-play .icon { width: 17px; height: 17px; fill: currentColor; stroke: none; }
 .art-lines { position: absolute; bottom: 16px; left: 21px; width: 50px; height: 10px; background: linear-gradient(#9d8ea1, #9d8ea1) top left / 50px 2px no-repeat, linear-gradient(#76667c, #76667c) bottom left / 33px 2px no-repeat; }
 
-.job-progress { display: flex; align-items: flex-start; gap: 12px; padding: 14px; margin-bottom: 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--paper); overflow-wrap: anywhere; }
-.job-progress p { color: var(--muted); font-size: .87rem; margin-top: 3px; }
-.job-indicator { width: 13px; height: 13px; flex: 0 0 13px; margin-top: 5px; border: 2px solid #766481; border-top-color: transparent; border-radius: 50%; animation: spin 900ms linear infinite; }
-.job-indicator.done { animation: none; border: 0; background: #637923; }
-.job-indicator.failed { animation: none; border: 0; background: var(--error); }
-@keyframes spin { to { transform: rotate(360deg); } }
+.queue-panel { padding: 14px; margin-bottom: 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); }
+.queue-heading, .queue-card-heading { display: flex; flex-wrap: wrap; align-items: start; justify-content: space-between; gap: 6px 12px; }
+.queue-heading h3 { font-size: .98rem; }
+.queue-heading p, .queue-card p { color: var(--muted); font-size: .82rem; }
+.queue-list { display: grid; gap: 7px; }
+.queue-list:not(:empty) { margin-top: 10px; }
+.queue-card { min-width: 0; border: 1px solid var(--line); border-radius: 9px; padding: 10px 11px; overflow-wrap: anywhere; }
+.queue-card.running { background: #f3eee6; }
+.queue-card h4 { margin: 0; font-size: .88rem; }
+.queue-card code { font-size: .76rem; color: var(--muted); }
+.queue-card .queue-status { background: #eee7df; border-radius: 5px; padding: 2px 6px; color: var(--ink); font-size: .73rem; font-weight: 700; white-space: nowrap; }
+.queue-card.running .queue-status { background: var(--accent); }
+.queue-card.completed .queue-status { background: #ecf3d8; color: #405715; }
+.queue-card.failed .queue-status { background: #f6e6e4; color: var(--error); }
+.queue-steps { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 5px; margin: 12px 0 10px; padding: 0; list-style: none; }
+.queue-steps li { border-top: 3px solid var(--line); color: var(--muted); padding-top: 4px; font-size: clamp(.64rem, 1.4vw, .78rem); }
+.queue-steps li.complete { border-color: #81994d; }
+.queue-steps li[aria-current="step"] { border-color: var(--plum); color: var(--ink); font-weight: 700; }
+.queue-steps li.failed { border-color: var(--error); }
+.queue-current { display: grid; gap: 4px; }
+.queue-current strong { font-size: .85rem; }
+.queue-progress { width: 100%; height: 7px; accent-color: #68852e; }
+.queue-percent { font-variant-numeric: tabular-nums; }
+.queue-activity, .queue-history { color: var(--muted); font-size: .81rem; margin-top: 8px; }
+.queue-activity ol { margin: 6px 0 0; padding-left: 20px; }
+.queue-activity li + li { margin-top: 3px; }
+.queue-view { margin-top: 7px; }
+.queue-view .button { min-height: 30px; padding: 4px 7px; font-size: .76rem; }
+.batch:target { outline: 2px solid #829a48; outline-offset: 3px; }
 
 .batches { display: grid; gap: 15px; }
 .batch { border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); min-width: 0; padding: 16px; }
@@ -235,4 +259,3 @@ dialog::backdrop { background: #231a29b5; }
     .field-grid select { font-size: .79rem; }
     .job-checks { grid-template-columns: minmax(0, 1fr); }
 }
-@media (prefers-reduced-motion: reduce) { .job-indicator { animation: none; } }

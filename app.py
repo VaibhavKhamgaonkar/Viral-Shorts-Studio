@@ -2,7 +2,9 @@ import json
 import os
 import shutil
 import threading
+import time
 import uuid
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlparse
@@ -18,6 +20,7 @@ from pydantic import BaseModel, Field, model_validator
 from config.settings import load_settings, save_settings
 from config.studio import Layout, StudioSettings, studio_settings
 from core.downloader import DOWNLOADS_DIR, clear_all_downloads_detailed, get_downloads_storage_info, sanitize_filename
+from core.job_queue import JobQueue
 from core.studio_pipeline import run_job
 from core.transformer import AUDIO_EXTENSIONS, MUSIC_DIR, OUTPUT_DIR, asset_files
 
@@ -25,11 +28,21 @@ BASE_DIR = Path(__file__).resolve().parent
 WEB_DIR = BASE_DIR / "web"
 UPLOADS_DIR = BASE_DIR / "uploads"
 UPLOAD_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
-app = FastAPI(title="Viral Shorts Studio")
-app.mount("/studio", StaticFiles(directory=WEB_DIR, check_dir=False), name="studio")
-JOBS = {}
-WORKSPACE_LOCK = threading.Lock()
+JOB_QUEUE = JobQueue(BASE_DIR / "data" / "jobs.sqlite3")
 SETTINGS_LOCK = threading.Lock()
+
+
+@asynccontextmanager
+async def lifespan(_app):
+    JOB_QUEUE.start(process_job)
+    try:
+        yield
+    finally:
+        JOB_QUEUE.stop()
+
+
+app = FastAPI(title="Viral Shorts Studio", lifespan=lifespan)
+app.mount("/studio", StaticFiles(directory=WEB_DIR, check_dir=False), name="studio")
 
 
 class ClipRequest(BaseModel):
@@ -74,9 +87,12 @@ class ClipRequest(BaseModel):
         return self
 
 
-def require_idle():
-    if not WORKSPACE_LOCK.acquire(blocking=False):
-        raise HTTPException(409, "A clip job is running. Try again after it finishes.")
+@contextmanager
+def idle_workspace():
+    with JOB_QUEUE.gate:
+        if JOB_QUEUE.has_work():
+            raise HTTPException(409, "Wait for the clip queue to finish before deleting studio files.")
+        yield
 
 
 def task_folder(name):
@@ -185,27 +201,20 @@ def storage_info():
 
 @app.post("/api/clear_downloads")
 def clear_downloads_endpoint():
-    require_idle()
-    try:
+    with idle_workspace():
         return clear_all_downloads_detailed()
-    finally:
-        WORKSPACE_LOCK.release()
 
 
 @app.post("/api/delete_task/{folder_name}")
 def delete_task_endpoint(folder_name: str):
-    require_idle()
-    try:
+    with idle_workspace():
         shutil.rmtree(task_folder(folder_name))
         return {"status": "ok"}
-    finally:
-        WORKSPACE_LOCK.release()
 
 
 @app.post("/api/delete_source/{folder_name}")
 def delete_source_endpoint(folder_name: str):
-    require_idle()
-    try:
+    with idle_workspace():
         folder = task_folder(folder_name)
         info = read_json(folder / "info.json")
         paths = [Path(file).resolve() for file in info.get("source_files", [])]
@@ -221,8 +230,6 @@ def delete_source_endpoint(folder_name: str):
                 file.unlink()
                 deleted += 1
         return {"status": "ok", "deleted_count": deleted}
-    finally:
-        WORKSPACE_LOCK.release()
 
 
 def open_in_explorer(path):
@@ -266,9 +273,12 @@ def upload_video_endpoint(file: UploadFile = File(...)):
 @app.get("/api/tasks")
 def list_tasks():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    running = JOB_QUEUE.running_id()
     entries = sorted(OUTPUT_DIR.iterdir(), key=lambda file: file.stat().st_mtime, reverse=True)
     batches = []
     for entry in entries:
+        if running and entry.name.endswith(f"_[{running}]"):
+            continue
         videos = sorted(entry.glob("*.mp4")) if entry.is_dir() else []
         clips = [
             {"title": video.stem} | read_json(video.with_suffix(".json")) | {"filename": video.name}
@@ -287,17 +297,33 @@ def list_tasks():
     return batches
 
 
-def process_job(job_id, request, preferences):
-    def update(stage, detail, status="running"):
-        JOBS[job_id] = {"status": status, "stage": stage, "detail": detail}
+def process_job(job_id, payload, preferences):
+    request = ClipRequest.model_validate(payload)
+    settings = preferences | {"llm_api_key": load_settings()["llm_api_key"]}
+    last_report = None
+    last_update = 0
 
-    try:
-        count = run_job(job_id, request, preferences, update)
-        update("Clips ready", f"Exported {count} clip{'s' if count != 1 else ''} to the library.", "completed")
-    except Exception as error:
-        update("Could not finish this job", str(error), "failed")
-    finally:
-        WORKSPACE_LOCK.release()
+    def update(phase, stage, detail, progress=None, source=None):
+        nonlocal last_report, last_update
+        now = time.monotonic()
+        report = (phase, stage, detail, progress, source)
+        updating_percent = progress is not None and last_report and last_report[3] is not None
+        if report == last_report or (updating_percent and now - last_update < 1):
+            return
+        JOB_QUEUE.report(job_id, phase, stage, detail, progress, source)
+        last_report, last_update = report, now
+
+    def cleanup(paths):
+        with JOB_QUEUE.gate:
+            if request.file_path and JOB_QUEUE.source_is_queued(request.file_path):
+                return
+            for file in filter(None, paths):
+                try:
+                    Path(file).unlink(missing_ok=True)
+                except OSError as error:
+                    update("finalize", "Source copy kept", f"Could not remove the local source copy: {error}")
+
+    return run_job(job_id, request, settings, update, cleanup)
 
 
 @app.post("/api/generate")
@@ -308,7 +334,11 @@ def create_job(request: ClipRequest):
     request.mode = request.mode or preferences.default_mode
     if request.auto_delete_source is None:
         request.auto_delete_source = preferences.auto_delete_source
-    effective = settings | preferences.model_dump()
+    pipeline_keys = (
+        "llm_base_url", "whisper_model_size", "whisper_device", "audio_tempo",
+        "color_contrast", "color_saturation",
+    )
+    effective = preferences.model_dump(exclude={"destinations"}) | {key: settings[key] for key in pipeline_keys}
     if request.model:
         effective["llm_model"] = request.model
     for value, key in (
@@ -320,23 +350,25 @@ def create_job(request: ClipRequest):
         if value is not None:
             effective[key] = value
 
-    require_idle()
-    job_id = uuid.uuid4().hex[:8]
-    JOBS[job_id] = {"status": "queued", "stage": "Queued", "detail": "Preparing clip job."}
+    source = request.url if request.source_type == "url" else Path(request.file_path).stem.rsplit("_", 1)[0]
     try:
-        threading.Thread(target=process_job, args=(job_id, request, effective), daemon=True).start()
-    except RuntimeError:
-        WORKSPACE_LOCK.release()
-        JOBS.pop(job_id, None)
-        raise
+        job_id = JOB_QUEUE.submit(source, request.model_dump(), effective)
+    except FileNotFoundError as error:
+        raise HTTPException(422, str(error)) from error
     return {"job_id": job_id}
+
+
+@app.get("/api/jobs")
+def list_jobs():
+    return JOB_QUEUE.snapshot()
 
 
 @app.get("/api/job/{job_id}")
 def get_job(job_id: str):
-    if job_id not in JOBS:
-        raise HTTPException(404, "Job not found. The studio may have restarted.")
-    return JOBS[job_id]
+    job = JOB_QUEUE.get(job_id)
+    if job is None:
+        raise HTTPException(404, "Job not found.")
+    return job
 
 
 if __name__ == "__main__":

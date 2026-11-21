@@ -8,6 +8,7 @@
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23ddf76d'/%3E%3Cpath d='M10 22 22 10' stroke='%23241b29' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
     <link rel="stylesheet" href="/studio/studio.css">
     <script src="/studio/studio.js" defer></script>
+    <script src="/studio/queue.js" defer></script>
 </head>
 <body>
 <svg xmlns="http://www.w3.org/2000/svg" class="icon-sprite" aria-hidden="true">
@@ -124,7 +125,7 @@
                             <small id="custom-opening-help">Shown in place of the suggested hook when Show opening text is on.</small>
                         </div>
                     </fieldset>
-                    <button id="generate" class="button button-primary generate-button" type="submit"><svg class="icon"><use href="#i-spark"/></svg> Generate clips <svg class="icon end-icon"><use href="#i-arrow"/></svg></button>
+                    <button id="generate" class="button button-primary generate-button" type="submit"><svg class="icon"><use href="#i-spark"/></svg> Queue clips <svg class="icon end-icon"><use href="#i-arrow"/></svg></button>
                     <p id="form-message" class="form-message" role="alert" hidden></p>
                 </form>
             </section>
@@ -134,9 +135,15 @@
                     <div><h2 id="library-title">Clip library</h2><p id="clip-count" aria-live="polite">Loading clips…</p></div>
                     <button class="button button-outline" type="button" id="refresh"><svg class="icon"><use href="#i-refresh"/></svg> Refresh</button>
                 </div>
-                <section class="job-progress" id="job-progress" aria-live="polite" hidden>
-                    <span class="job-indicator" id="job-indicator"></span>
-                    <div><strong id="job-stage"></strong><p id="job-detail"></p></div>
+                <section class="queue-panel" aria-labelledby="queue-title">
+                    <div class="queue-heading"><h3 id="queue-title">Task queue</h3><p id="queue-summary">Checking queue…</p></div>
+                    <div id="queue-active" class="queue-list"></div>
+                    <div id="queue-latest" class="queue-list"></div>
+                    <details class="queue-history" id="queue-history" hidden>
+                        <summary>Earlier jobs</summary>
+                        <div id="queue-past" class="queue-list"></div>
+                    </details>
+                    <p id="queue-error" class="form-message" role="alert" hidden></p>
                 </section>
                 <div id="library-empty" class="library-empty" hidden>
                     <div class="empty-art" aria-hidden="true">
@@ -145,8 +152,8 @@
                         <div class="art-frame art-frame-right"></div>
                         <div class="art-frame art-frame-center"><span class="art-corner"></span><span class="art-play"><svg class="icon"><use href="#i-play"/></svg></span><span class="art-lines"></span></div>
                     </div>
-                    <h3>No clips yet</h3>
-                    <p>Add a video and generate your first batch. Your clips and posting copy will appear here.</p>
+                    <h3 id="library-empty-title">No clips yet</h3>
+                    <p id="library-empty-copy">Add a video and queue your first batch. Exports and AI posting kits will appear here.</p>
                     <a class="empty-link" href="/" id="start-link">Create a clip <svg class="icon"><use href="#i-arrow"/></svg></a>
                 </div>
                 <div id="clip-batches" class="batches"></div>
@@ -198,7 +205,7 @@
                 <div class="destination"><div class="field"><label for="youtube-account">YouTube channel</label><input id="youtube-account" maxlength="150" placeholder="@channel"></div><label class="check"><input type="checkbox" id="youtube-enabled" aria-label="YouTube future default" aria-describedby="publish-default-help"> Future default</label></div>
                 <div class="destination"><div class="field"><label for="instagram-account">Instagram profile</label><input id="instagram-account" maxlength="150" placeholder="@profile"></div><label class="check"><input type="checkbox" id="instagram-enabled" aria-label="Instagram future default" aria-describedby="publish-default-help"> Future default</label></div>
                 <div class="destination"><div class="field"><label for="facebook-account">Facebook Page</label><input id="facebook-account" maxlength="150" placeholder="Page name or ID"></div><label class="check"><input type="checkbox" id="facebook-enabled" aria-label="Facebook future default" aria-describedby="publish-default-help"> Future default</label></div>
-                <p class="publishing-help">To publish now, download the <strong>MP4</strong> from <a href="/library">Clip library</a>, open <strong>Posting copy</strong>, and upload through the platform.</p>
+                <p class="publishing-help">To publish now, download the <strong>MP4</strong> from <a href="/library">Clip library</a>, open the <strong>AI posting kit</strong>, and upload through the platform.</p>
             </section>
 
             <div class="settings-actions"><button id="save-settings" class="button button-primary" type="submit">Save settings <svg class="icon"><use href="#i-arrow"/></svg></button><p id="settings-message" class="form-message" role="status" hidden></p></div>
@@ -211,5 +218,6 @@
     <div id="dialog-content"></div>
 </dialog>
 <p id="toast" class="toast" aria-live="polite" hidden></p>
+<p id="queue-announcement" class="sr-only" role="status"></p>
 </body>
 </html>

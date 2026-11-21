@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from tempfile import TemporaryFile
 
 import av
 
@@ -65,6 +66,25 @@ def find_companion_audio(video_path):
                  if file.stem == stem or file.stem.startswith(stem + ".f")), None)
 
 
+def run_encoder(command, target, duration, progress):
+    if progress is None:
+        result = subprocess.run(command, cwd=target, capture_output=True, encoding="utf-8", errors="replace")
+        return result.returncode, result.stderr
+
+    command = command[:1] + ["-progress", "pipe:1", "-nostats"] + command[1:]
+    with TemporaryFile() as log, subprocess.Popen(
+        command, cwd=target, stdout=subprocess.PIPE, stderr=log, text=True, encoding="utf-8", errors="replace",
+    ) as encoder:
+        for line in encoder.stdout:
+            key, _, value = line.strip().partition("=")
+            if key == "out_time_us" and value.isdigit():
+                progress(min(99, int(int(value) / duration / 10000)))
+        exit_code = encoder.wait()
+        log.seek(0, os.SEEK_END)
+        log.seek(max(0, log.tell() - 2048))
+        return exit_code, log.read().decode("utf-8", errors="replace")
+
+
 def render_viral_clip(
     input_video,
     start_time,
@@ -85,6 +105,7 @@ def render_viral_clip(
     output_width=1080,
     color_look="original",
     edge_fades=False,
+    progress=None,
 ):
     input_video = Path(input_video).resolve()
     target = Path(output_folder or OUTPUT_DIR).resolve()
@@ -188,9 +209,9 @@ def render_viral_clip(
     ]
 
     try:
-        result = subprocess.run(command, cwd=target, capture_output=True, encoding="utf-8", errors="replace")
-        if result.returncode:
-            raise RuntimeError(f"FFmpeg could not render this clip. {result.stderr.strip()[-600:]}")
+        exit_code, log = run_encoder(command, target, export_duration, progress)
+        if exit_code:
+            raise RuntimeError(f"FFmpeg could not render this clip. {log.strip()[-600:]}")
         os.replace(temporary, output)
     finally:
         temporary.unlink(missing_ok=True)

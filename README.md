@@ -30,7 +30,7 @@ Run `start_web.bat`, open **Settings → Clip defaults**, enter `qwen2.5:7b` in 
 | **Ollama offline** | Open Ollama from the Start menu, or run `ollama serve` in a separate terminal. Refresh the studio. |
 | **Model missing** | Run `ollama list` and match the full model tag in Settings, including `:7b` or `:3b`. Pull the model if it is missing. |
 
-The studio can still trim and export with Ollama offline. Automatic selection falls back to timeline picks, and posting copy can use transcript excerpts when available. Whisper handles sources without usable captions and may download its speech model on first use.
+The studio can still trim and export with Ollama offline. Automatic selection falls back to timeline picks. AI posting kits require usable speech or captions and a response from the configured model. Whisper handles sources without usable captions and may download its speech model on first use.
 
 ### Start from PowerShell
 
@@ -48,21 +48,24 @@ python -m venv venv
 2. Choose automatic highlights or enter exact start and end times in seconds or `hh:mm:ss`. Automatic presets target **20–60 seconds**, **1–3 minutes**, or **3–10 minutes**, subject to the available footage. Exact ranges can run from **1 second to 10 minutes** per clip.
 3. Choose blurred background, center crop, or a gameplay split screen. Put a video loop you can use in `assets/gameplay/` for split screen. The renderer uses a blurred background when that folder has no supported clips.
 4. Use **Advanced clip options** to set the clip count, choose 1080 × 1920 or 720 × 1280, adjust speed, override source audio, or toggle captions and mirroring. You can choose a warm or black-and-white look, fade the picture and sound at both ends, and write your own opening text. These choices apply to the current job and are rendered into the exported MP4.
-5. Generate and review the exports in **Clip library**. Each batch stores vertical MP4s, ASS subtitle files and JSON metadata under `output_clips/`. Open **Posting copy** for title options, opening text, a description, hashtags, a pinned comment, and a music brief when available.
+5. Click **Queue clips**. You can submit more jobs right away. The **Task queue** shows each task ID, its position, and the stage history from source checks through saving the exports. Download, transcription, and encoding percentages appear when available.
+6. The studio shows an in-app notice when a job finishes. Open **View clips** or find the batch in **Clip library**. Each batch stores vertical MP4s, ASS subtitle files, and JSON metadata under `output_clips/`. The **AI posting kit** contains model-generated titles, hooks, descriptions, hashtags, editing and posting suggestions, and optional sound cues when the model provides them.
 
 For YouTube videos with usable captions, the studio scans the transcript in overlapping windows and asks yt-dlp for selected ranges. If a range request fails it can use a full download. Highlights depend on spoken content and the available transcript. Use an exact range for a moment you already know.
+
+One job runs at a time to share local resources. Waiting jobs and recent status survive a studio restart. Resubmit a job that was interrupted while running. The queue database lives under the local `data/` folder.
 
 ## Studio settings
 
 - **Brand and captions** set the on-video channel label, caption style, accent color, and three-second opening hook for new exports.
 - **Clip defaults** set the Ollama model, default crop and length, clip count, and source-copy cleanup preference. The **Download cache** menu provides manual cleanup.
-- **Audio and music** can keep or mute the source audio, replace it with a selected local track, or apply a track Qwen recommends. Upload tracks through Settings or place usable audio files under `assets/music/`. If Qwen finds no match, AI replacement preserves the source audio. Replacement removes the entire original soundtrack, including speech. Music briefs describe mood, tempo, and instruments for sourcing or using a separate music generator.
+- **Audio and music** can keep or mute the source audio, replace it with a selected local track, or apply a track Qwen recommends. Upload tracks through Settings or place usable audio files under `assets/music/`. If Qwen finds no match, AI replacement preserves the source audio. Replacement removes the entire original soundtrack, including speech. Qwen 2.5 writes music briefs and sound-effect prompts as text. Generating the audio file requires an audio model such as [Stable Audio Open Small](https://huggingface.co/stabilityai/stable-audio-open-small).
 
 ## Publish your clips
 
 **Publishing destinations** saves YouTube channel, Instagram profile, and Facebook Page details on this machine. **Future default** records which accounts you want preselected when direct uploads are available. Account connection and automatic uploads are unavailable in this version.
 
-For now, open **Clip library**, download the **MP4**, and use **Posting copy** to copy the title or caption. Then upload through [YouTube Studio](https://studio.youtube.com/), [Instagram](https://www.instagram.com/), or [Meta Business Suite](https://business.facebook.com/). Direct uploads will require the studio to implement YouTube authorization and the relevant Meta publishing permissions. [YouTube upload API](https://developers.google.com/youtube/data/guides/uploading_a_video) · [Instagram publishing](https://developers.facebook.com/documentation/instagram-platform/content-publishing) · [Facebook Page Reels](https://developers.facebook.com/documentation/video-api/guides/reels-publishing)
+For now, open **Clip library**, download the **MP4**, and use the **AI posting kit** to copy the title or caption. Then upload through [YouTube Studio](https://studio.youtube.com/), [Instagram](https://www.instagram.com/), or [Meta Business Suite](https://business.facebook.com/). Direct uploads will require the studio to implement YouTube authorization and the relevant Meta publishing permissions. [YouTube upload API](https://developers.google.com/youtube/data/guides/uploading_a_video) · [Instagram publishing](https://developers.facebook.com/documentation/instagram-platform/content-publishing) · [Facebook Page Reels](https://developers.facebook.com/documentation/video-api/guides/reels-publishing)
 
 ### Footage and music rights
 

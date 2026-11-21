@@ -54,6 +54,24 @@ class HighlightTests(unittest.TestCase):
         self.assertEqual(copy["copy_source"], "ai")
         self.assertEqual(copy["music_track"], "")
 
+    def test_posting_kit_only_uses_model_output(self):
+        clip = {"start_time": 0, "end_time": 15}
+        transcript = [{"start": 1, "end": 10, "text": "A real line from the source."}]
+        settings = {"llm_base_url": "http://localhost:11434/v1", "llm_api_key": "ollama", "llm_model": "qwen2.5:7b"}
+        with patch("core.analyzer.ask_model", return_value=[]):
+            copy = generate_post_copy(clip, transcript, "Source", settings)
+        self.assertEqual(copy["copy_source"], "model_unavailable")
+        self.assertEqual(copy["hook"], "")
+        self.assertEqual(copy["description"], "")
+
+        with patch("core.analyzer.ask_model", return_value=[{"title": "The demo", "editing_tip": "Open on the first example."}]):
+            copy = generate_post_copy(clip, transcript, "Source", settings)
+        self.assertEqual(copy["copy_source"], "ai")
+        self.assertEqual(copy["copy_model"], "qwen2.5:7b")
+        self.assertEqual(copy["editing_tip"], "Open on the first example.")
+        self.assertEqual(copy["hook"], "")
+        self.assertEqual(copy["description"], "")
+
 
 if __name__ == "__main__":
     unittest.main()

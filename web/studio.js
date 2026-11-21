@@ -8,8 +8,9 @@ const createForm = byId("create-form");
 const dialog = byId("detail-dialog");
 let sourceType = "url";
 let savedUpload;
-let pollId;
 let noticeTimer;
+let libraryBatchIds = new Set();
+let libraryRequest = 0;
 
 function element(tag, className, text) {
     const node = document.createElement(tag);
@@ -202,13 +203,6 @@ function formatTime(value) {
     return hours ? hours + ":" + String(minutes).padStart(2, "0") + ":" + remainder : minutes + ":" + remainder;
 }
 
-function showProgress(stage, detail, status) {
-    byId("job-progress").hidden = false;
-    if (byId("job-stage").textContent !== stage) byId("job-stage").textContent = stage;
-    if (byId("job-detail").textContent !== detail) byId("job-detail").textContent = detail;
-    byId("job-indicator").className = "job-indicator" + (status ? " " + status : "");
-}
-
 async function startJob(event) {
     event.preventDefault();
     byId("generate").disabled = true;
@@ -244,7 +238,7 @@ async function startJob(event) {
             const file = byId("video-file").files[0];
             if (!file) throw new Error("Choose a video to upload.");
             if (savedUpload?.file !== file) {
-                showProgress("Uploading video", "Copying " + file.name + " into the local workspace.");
+                message("form-message", "Copying " + file.name + " into the local workspace…", true);
                 const upload = await api("/api/upload_video", fileRequest(file));
                 savedUpload = {file, path: upload.file_path};
             }
@@ -253,33 +247,14 @@ async function startJob(event) {
             request.url = byId("youtube-url").value.trim();
         }
         const job = await api("/api/generate", jsonRequest("POST", request));
-        sessionStorage.setItem("studio-job", job.job_id);
+        message("form-message", "Task " + job.job_id + " added to the queue.", true);
         if (request.auto_delete_source) savedUpload = null;
-        pollJob(job.job_id);
+        trackSubmittedJob(job.job_id);
     } catch (error) {
-        if (byId("job-stage").textContent === "Uploading video") byId("job-progress").hidden = true;
         message("form-message", error.message);
+    } finally {
         byId("generate").disabled = false;
     }
-}
-
-async function pollJob(id) {
-    clearTimeout(pollId);
-    byId("generate").disabled = true;
-    try {
-        const job = await api("/api/job/" + encodeURIComponent(id));
-        const active = job.status === "queued" || job.status === "running";
-        showProgress(job.stage, job.detail, active ? "" : job.status === "completed" ? "done" : "failed");
-        if (active) {
-            pollId = setTimeout(() => pollJob(id), 1400);
-            return;
-        }
-        await Promise.all([loadTasks(), loadStorage()]);
-    } catch (error) {
-        showProgress("Job status unavailable", error.message, "failed");
-    }
-    sessionStorage.removeItem("studio-job");
-    byId("generate").disabled = false;
 }
 
 function addCopySection(container, title, content) {
@@ -292,20 +267,30 @@ function addCopySection(container, title, content) {
 
 function openPostCopy(clip) {
     const contents = [];
-    const sourceLabels = {ai: "Drafted by the local model", transcript: "Drafted from the transcript", source: "Based on source details"};
-    if (sourceLabels[clip.copy_source]) contents.push(element("p", "section-copy", sourceLabels[clip.copy_source]));
+    if (clip.copy_source !== "ai") {
+        const reason = ["no_transcript", "source"].includes(clip.copy_source)
+            ? "This clip has no usable transcript for an AI posting kit."
+            : "No AI posting kit was saved for this clip. Check the Ollama status before generating another clip.";
+        showDialog("AI posting kit", [element("p", "section-copy", reason)]);
+        return;
+    }
+    const model = clip.copy_model ? "Drafted by " + clip.copy_model : "Drafted by the local model";
+    contents.push(element("p", "section-copy", model));
     addCopySection(contents, "Title", clip.title);
     for (const [index, variant] of (clip.title_variants || []).entries()) addCopySection(contents, "Alternative title " + (index + 1), variant);
-    addCopySection(contents, "Opening text", clip.hook);
+    addCopySection(contents, "Suggested opening text", clip.ai_hook);
     addCopySection(contents, "Description", clip.description);
     addCopySection(contents, "Pinned comment", clip.pinned_comment);
     const tags = (clip.tags || []).map((tag) => "#" + tag.replace(/^#+/, "").replace(/\s+/g, "")).join(" ");
     addCopySection(contents, "Hashtags", tags);
-    addCopySection(contents, "Music brief · use to source or generate a track", clip.music_brief);
+    addCopySection(contents, "Editing suggestion", clip.editing_tip);
+    addCopySection(contents, "Posting angle", clip.posting_tip);
+    addCopySection(contents, "Music brief", clip.music_brief);
+    addCopySection(contents, "Sound effect suggestion", clip.sound_effect_prompt);
     addCopySection(contents, "Suggested library track", clip.music_track);
     if (clip.applied_music) contents.push(element("p", "section-copy", "Audio replacement used: " + clip.applied_music));
     if (clip.selection === "ai" && clip.reason) contents.push(element("p", "section-copy", "Why this highlight: " + clip.reason));
-    showDialog("Posting copy", contents);
+    showDialog("AI posting kit", contents);
 }
 
 function clipCard(clip, folder) {
@@ -327,7 +312,7 @@ function clipCard(clip, folder) {
     const actions = element("div", "clip-actions");
     const download = link("MP4", uri, "download");
     download.download = clip.filename;
-    actions.append(action("Posting copy", () => openPostCopy(clip), "copy"), download);
+    actions.append(action("AI posting kit", () => openPostCopy(clip), "copy"), download);
     body.append(actions);
     card.append(video, body);
     return card;
@@ -335,6 +320,7 @@ function clipCard(clip, folder) {
 
 function batchCard(batch) {
     const card = element("article", "batch");
+    card.id = "batch-" + batch.task_id;
     const heading = element("div", "batch-heading");
     heading.append(element("h3", null, batch.source_title));
     if (/^https?:\/\/(?:[^/]+\.)?(?:youtube\.com|youtu\.be)\//i.test(batch.youtube_url || "")) {
@@ -371,19 +357,26 @@ function batchCard(batch) {
 }
 
 async function loadTasks() {
+    const request = ++libraryRequest;
     byId("refresh").disabled = true;
     try {
         const tasks = await api("/api/tasks");
+        if (request !== libraryRequest) return;
+        const firstLoad = libraryBatchIds.size === 0;
+        libraryBatchIds = new Set(tasks.map((batch) => batch.task_id));
         const count = tasks.reduce((total, batch) => total + batch.clips.length, 0);
         byId("clip-count").textContent = count + (count === 1 ? " exported clip" : " exported clips");
         byId("library-empty").hidden = count !== 0;
         byId("clip-batches").replaceChildren(...tasks.map(batchCard));
+        if (firstLoad && location.hash.startsWith("#batch-")) byId(location.hash.slice(1))?.scrollIntoView();
+        renderLatestQueue();
         message("library-message");
     } catch (error) {
+        if (request !== libraryRequest) return;
         byId("clip-count").textContent = "Library unavailable";
         message("library-message", error.message);
     } finally {
-        byId("refresh").disabled = false;
+        if (request === libraryRequest) byId("refresh").disabled = false;
     }
 }
 
@@ -516,8 +509,3 @@ byId("add-music").addEventListener("click", addMusic);
 loadPreferences().catch((error) => message(route === "settings" ? "settings-message" : "form-message", error.message));
 loadAI();
 loadStorage();
-if (route !== "settings") {
-    loadTasks();
-    const activeJob = sessionStorage.getItem("studio-job");
-    if (activeJob) pollJob(activeJob);
-}

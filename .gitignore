@@ -12,6 +12,7 @@ __pycache__/
 /bin/
 /downloads/
 /uploads/
+/data/
 /output_clips/
 /output/
 /dist/

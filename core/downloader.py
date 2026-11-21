@@ -4,6 +4,7 @@ import sys
 import json
 import shutil
 import subprocess
+from collections import deque
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -150,7 +151,34 @@ def fetch_subtitles_only(url: str) -> dict:
         "subtitle_path": sub_file
     }
 
-def download_video_section(url: str, start_sec: float, end_sec: float, output_path: str) -> bool:
+def run_download(command, progress=None):
+    if progress is None:
+        subprocess.run(command, check=True)
+        return
+
+    prefix = "studio_progress:"
+    command = command[:1] + [
+        "--progress", "--newline", "--color", "never",
+        "--progress-template", f"download:{prefix}%(progress._percent_str)s",
+    ] + command[1:]
+    messages = deque(maxlen=10)
+    with subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
+    ) as download:
+        for line in download.stdout:
+            line = line.strip()
+            if line.startswith(prefix):
+                try:
+                    progress(max(0, min(100, int(float(line[len(prefix):].strip().rstrip("%"))))))
+                except (ValueError, OverflowError):
+                    continue
+            elif line:
+                messages.append(line)
+        if download.wait():
+            raise RuntimeError("YouTube download failed. " + " ".join(messages)[-750:])
+
+
+def download_video_section(url: str, start_sec: float, end_sec: float, output_path: str, *, progress=None) -> bool:
     """Request the specified time range using yt-dlp and FFmpeg."""
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     
@@ -169,7 +197,7 @@ def download_video_section(url: str, start_sec: float, end_sec: float, output_pa
     ]
     print(f"[*] Byte-range fetching {time_range} from YouTube...")
     try:
-        subprocess.run(cmd, check=True)
+        run_download(cmd, progress)
         return os.path.exists(output_path) and os.path.getsize(output_path) > 1024
     except Exception as e:
         print(f"[!] Failed to fetch section: {e}")
@@ -285,7 +313,7 @@ def check_existing_download(clean_title: str, video_id: str) -> dict:
         "subtitle_path": sub_file
     }
 
-def download_video(url: str, output_name: str = None) -> dict:
+def download_video(url: str, output_name: str = None, *, progress=None) -> dict:
     from core.transformer import get_ffmpeg_cmd
 
     DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
@@ -324,7 +352,7 @@ def download_video(url: str, output_name: str = None) -> dict:
     ]
     
     print(f"[*] Downloading YouTube video (accelerated 8x): {info['title']}...")
-    subprocess.run(cmd, check=True)
+    run_download(cmd, progress)
     
     video_file = None
     audio_file = None

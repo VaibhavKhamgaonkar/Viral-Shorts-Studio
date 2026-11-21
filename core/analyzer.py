@@ -175,6 +175,8 @@ def generate_post_copy(clip, transcript, source_title, settings, music_tracks=()
         if segment["end"] <= clip["start_time"] or segment["start"] >= clip["end_time"]:
             continue
         text = text_field(segment["text"], 1200)
+        if not text:
+            continue
         if length + len(text) > 14000:
             break
         excerpt.append(text)
@@ -182,14 +184,17 @@ def generate_post_copy(clip, transcript, source_title, settings, music_tracks=()
 
     fallback = {
         "title": text_field(clip.get("title"), 95) or text_field(source_title, 95) or "Untitled clip",
-        "hook": text_field(excerpt[0], 66) if excerpt else "",
-        "description": " ".join(excerpt)[:220].strip(),
+        "hook": "",
+        "description": "",
         "title_variants": [],
         "pinned_comment": "",
         "tags": [],
         "music_brief": "",
         "music_track": "",
-        "copy_source": "transcript" if excerpt else "source",
+        "editing_tip": "",
+        "posting_tip": "",
+        "sound_effect_prompt": "",
+        "copy_source": "model_unavailable" if excerpt else "no_transcript",
     }
     if not excerpt:
         return fallback
@@ -199,9 +204,12 @@ def generate_post_copy(clip, transcript, source_title, settings, music_tracks=()
         "Return one object with title (under 95 characters), title_variants (two alternatives), "
         "hook (a complete on-screen opening line, at most 65 characters), description (1–2 sentences), "
         "pinned_comment (a relevant question), tags (up to five topical hashtags), "
-        "music_brief (an instrumental mood, tempo and instrumentation, under 220 characters), "
-        "and music_track (one exact filename from the library if it fits, or an empty string). "
-        "Keep claims faithful to the clip.\n"
+        "editing_tip (one specific change to improve pacing or clarity), "
+        "posting_tip (a specific angle for presenting this clip to its likely audience), "
+        "music_brief (instrumental mood, tempo, and instruments), "
+        "sound_effect_prompt (an optional short sound cue and where to place it, or empty), "
+        "and music_track (one exact filename from the library if it fits, or empty). "
+        "Keep tips and copy specific to the excerpt. Avoid invented facts, performance guarantees, or generic posting times.\n"
         f"Source title: {source_title}\nLibrary filenames: {json.dumps(list(music_tracks), ensure_ascii=False)}\n\n"
         + "\n".join(excerpt)
     )
@@ -213,8 +221,11 @@ def generate_post_copy(clip, transcript, source_title, settings, music_tracks=()
     if not result or not text_field(result[0].get("title"), 95):
         return fallback
     raw = result[0]
-    for field, size in (("title", 95), ("hook", 66), ("description", 1200), ("pinned_comment", 250), ("music_brief", 220)):
-        fallback[field] = text_field(raw.get(field), size) or fallback[field]
+    for field, size in (
+        ("title", 95), ("hook", 66), ("description", 1200), ("pinned_comment", 250),
+        ("editing_tip", 240), ("posting_tip", 240), ("music_brief", 220), ("sound_effect_prompt", 240),
+    ):
+        fallback[field] = text_field(raw.get(field), size)
     for field, count, size in (("title_variants", 2, 95), ("tags", 5, 45)):
         values = raw.get(field)
         if isinstance(values, list):
@@ -222,4 +233,5 @@ def generate_post_copy(clip, transcript, source_title, settings, music_tracks=()
     if raw.get("music_track") in music_tracks:
         fallback["music_track"] = raw["music_track"]
     fallback["copy_source"] = "ai"
+    fallback["copy_model"] = settings["llm_model"]
     return fallback

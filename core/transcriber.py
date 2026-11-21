@@ -145,7 +145,7 @@ try:
 except Exception:
     pass
 
-def transcribe_with_whisper(media_path: str, model_size: str = "base", device: str = "auto") -> List[Dict]:
+def transcribe_with_whisper(media_path: str, model_size: str = "base", device: str = "auto", *, progress=None) -> List[Dict]:
     target_media = get_audio_ready_media_file(media_path)
     
     import av
@@ -171,10 +171,12 @@ def transcribe_with_whisper(media_path: str, model_size: str = "base", device: s
     print(f"[*] Running local Whisper ({model_size}) on {device} ({cpu_threads} CPU threads) for: {Path(target_media).name}...")
     
     model = WhisperModel(model_size, device=device, compute_type=compute_type, cpu_threads=cpu_threads)
-    whisper_segments, _ = model.transcribe(target_media, word_timestamps=True, vad_filter=True)
+    whisper_segments, info = model.transcribe(target_media, word_timestamps=True, vad_filter=True)
     
     results = []
     for s in whisper_segments:
+        if progress and info.duration:
+            progress(min(99, int(100 * s.end / info.duration)))
         words = []
         if s.words:
             words = [{"word": w.word, "start": round(w.start, 2), "end": round(w.end, 2)} for w in s.words]
@@ -187,7 +189,7 @@ def transcribe_with_whisper(media_path: str, model_size: str = "base", device: s
         })
     return results
 
-def get_transcript(video_path: str, subtitle_path: str = None, audio_path: str = None, model_size: str = "base", device: str = "auto") -> List[Dict]:
+def get_transcript(video_path: str, subtitle_path: str = None, audio_path: str = None, model_size: str = "base", device: str = "auto", *, progress=None) -> List[Dict]:
     if subtitle_path and os.path.exists(subtitle_path):
         print(f"[*] Found native YouTube captions: {subtitle_path}. Parsing directly...")
         parsed = parse_vtt_subtitles(subtitle_path)
@@ -196,4 +198,4 @@ def get_transcript(video_path: str, subtitle_path: str = None, audio_path: str =
         print("[!] Subtitles were too sparse, falling back to local Whisper...")
 
     target_for_whisper = audio_path if (audio_path and os.path.exists(audio_path)) else video_path
-    return transcribe_with_whisper(target_for_whisper, model_size=model_size, device=device)
+    return transcribe_with_whisper(target_for_whisper, model_size=model_size, device=device, progress=progress)
