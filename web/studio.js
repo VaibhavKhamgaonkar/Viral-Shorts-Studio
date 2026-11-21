@@ -362,13 +362,14 @@ async function loadTasks() {
     try {
         const tasks = await api("/api/tasks");
         if (request !== libraryRequest) return;
-        const firstLoad = libraryBatchIds.size === 0;
+        const target = location.hash.startsWith("#batch-") ? location.hash.slice(1) : "";
+        const newTarget = target && !libraryBatchIds.has(target.slice("batch-".length));
         libraryBatchIds = new Set(tasks.map((batch) => batch.task_id));
         const count = tasks.reduce((total, batch) => total + batch.clips.length, 0);
         byId("clip-count").textContent = count + (count === 1 ? " exported clip" : " exported clips");
         byId("library-empty").hidden = count !== 0;
         byId("clip-batches").replaceChildren(...tasks.map(batchCard));
-        if (firstLoad && location.hash.startsWith("#batch-")) byId(location.hash.slice(1))?.scrollIntoView();
+        if (newTarget) byId(target)?.scrollIntoView();
         renderLatestQueue();
         message("library-message");
     } catch (error) {

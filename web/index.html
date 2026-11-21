@@ -8,6 +8,7 @@
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23ddf76d'/%3E%3Cpath d='M10 22 22 10' stroke='%23241b29' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
     <link rel="stylesheet" href="/studio/studio.css">
     <script src="/studio/studio.js" defer></script>
+    <script src="/studio/task-tracker.js" defer></script>
     <script src="/studio/queue.js" defer></script>
 </head>
 <body>
@@ -55,8 +56,34 @@
 
 <main id="main" class="main" tabindex="-1">
     <header class="topbar">
-        <div><span class="top-home">Workspace</span> <span class="top-slash">/</span> <span id="breadcrumb">Create clips</span></div>
-        <button class="button button-plain cache-button" id="cache-button" type="button"><svg class="icon"><use href="#i-drive"/></svg> <span id="cache-label">Download cache</span></button>
+        <div class="topbar-row">
+            <div class="topbar-breadcrumb"><span class="top-home">Workspace</span> <span class="top-slash">/</span> <span id="breadcrumb">Create clips</span></div>
+            <div class="topbar-actions">
+                <details id="task-tracker" class="task-tracker">
+                    <summary aria-label="Task progress" aria-describedby="tracker-stage tracker-meta">
+                        <span class="tracker-stage" id="tracker-stage">Task progress</span>
+                        <span class="tracker-chevron" aria-hidden="true"></span>
+                        <span class="tracker-meta" id="tracker-meta">Checking queue…</span>
+                        <span class="tracker-bar" id="tracker-bar" aria-hidden="true"></span>
+                    </summary>
+                    <div class="tracker-popover">
+                        <h2>Task progress</h2>
+                        <div id="tracker-detail"></div>
+                        <a id="tracker-queue-link" class="button button-outline" href="/library#task-queue">
+                            Open task queue <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg>
+                        </a>
+                    </div>
+                </details>
+                <button class="button button-plain cache-button" id="cache-button" type="button"><svg class="icon"><use href="#i-drive"/></svg> <span id="cache-label">Download cache</span></button>
+            </div>
+        </div>
+        <div class="queue-flash" id="queue-flash" hidden>
+            <div><strong id="queue-flash-title"></strong><p id="queue-flash-detail"></p></div>
+            <a id="queue-flash-link" class="button button-outline" href="/library#task-queue">Open queue</a>
+            <button id="dismiss-queue-flash" class="button button-plain icon-button" type="button" aria-label="Dismiss task notification">
+                <svg class="icon" aria-hidden="true"><use href="#i-close"/></svg>
+            </button>
+        </div>
     </header>
     <div class="workspace">
         <header class="page-heading">
@@ -135,7 +162,7 @@
                     <div><h2 id="library-title">Clip library</h2><p id="clip-count" aria-live="polite">Loading clips…</p></div>
                     <button class="button button-outline" type="button" id="refresh"><svg class="icon"><use href="#i-refresh"/></svg> Refresh</button>
                 </div>
-                <section class="queue-panel" aria-labelledby="queue-title">
+                <section class="queue-panel" id="task-queue" aria-labelledby="queue-title" tabindex="-1">
                     <div class="queue-heading"><h3 id="queue-title">Task queue</h3><p id="queue-summary">Checking queue…</p></div>
                     <div id="queue-active" class="queue-list"></div>
                     <div id="queue-latest" class="queue-list"></div>

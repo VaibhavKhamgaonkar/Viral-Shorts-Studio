@@ -1,12 +1,5 @@
 "use strict";
 
-const phases = [
-    ["source", "Source"],
-    ["transcript", "Transcript"],
-    ["selection", "Selection"],
-    ["export", "Copy & render"],
-    ["finalize", "Save clips"],
-];
 const statusLabels = {queued: "Queued", running: "In progress", completed: "Ready", failed: "Failed"};
 const knownJobs = new Map(JSON.parse(sessionStorage.getItem("studio-queue-status") || "[]"));
 let queueSnapshot = [];
@@ -26,11 +19,11 @@ function queueCard(job, openActivities) {
     if (job.status === "running") {
         const steps = element("ol", "queue-steps");
         steps.setAttribute("aria-label", "Job stages");
-        const phaseIndex = phases.findIndex(([key]) => key === job.phase);
+        const currentIndex = phaseIndex(job);
         for (const [index, [key, title]] of phases.entries()) {
-            const step = element("li", index < phaseIndex ? "complete" : "", title);
+            const step = element("li", index < currentIndex ? "complete" : "", title);
             if (key === job.phase) step.setAttribute("aria-current", "step");
-            if (index < phaseIndex) step.prepend(element("span", "sr-only", "Done: "));
+            if (index < currentIndex) step.prepend(element("span", "sr-only", "Done: "));
             steps.append(step);
         }
         card.append(steps);
@@ -38,16 +31,10 @@ function queueCard(job, openActivities) {
 
     const current = element("div", "queue-current");
     if (job.status === "running") {
-        current.append(element("strong", null, job.stage));
-        if (Number.isFinite(job.progress)) {
-            const progress = element("progress", "queue-progress");
-            progress.max = 100;
-            progress.value = job.progress;
-            progress.setAttribute("aria-label", job.stage + " progress");
-            current.append(progress, element("p", "queue-percent", job.progress + "% · " + job.detail));
-        }
-    }
-    if (job.status !== "queued" && !Number.isFinite(job.progress)) {
+        const prefix = Number.isFinite(job.progress) ? job.progress + "% of step · " : "";
+        current.append(element("strong", null, job.stage), progressMeter(job, "queue-progress"),
+            element("p", "queue-percent", prefix + job.detail));
+    } else if (job.status !== "queued") {
         current.append(element("p", null, job.detail));
     }
     card.append(current);
@@ -91,6 +78,7 @@ function renderLatestQueue() {
 function renderQueue() {
     const active = queueSnapshot.filter((job) => job.status === "queued" || job.status === "running");
     const waiting = active.filter((job) => job.status === "queued").length;
+    renderHeaderTracker(active[0] || queueSnapshot[0], waiting);
     byId("queue-summary").textContent = active.length
         ? (active.length - waiting) + " running · " + waiting + " waiting"
         : "No jobs waiting";
@@ -116,7 +104,7 @@ async function refreshQueue() {
         const jobs = await api("/api/jobs");
         const finished = jobs.filter((job) => {
             const previous = knownJobs.get(job.job_id);
-            return (previous === "queued" || previous === "running")
+            return (previous === "queued" || previous === "running" || (queueLoaded && !previous))
                 && (job.status === "completed" || job.status === "failed");
         });
         const newResults = jobs.some((job) => ["completed", "failed"].includes(job.status)
@@ -131,18 +119,20 @@ async function refreshQueue() {
             renderQueue();
         }
         if (finished.length) {
-            const notice = finished.length === 1
-                ? "Task #" + finished[0].job_id + " · " + finished[0].detail
-                : finished.length + " tasks finished. See the task queue for results.";
-            byId("queue-announcement").textContent = notice;
-            toast(notice);
+            showQueueFlash(finished);
             loadStorage();
         }
         if (queueLoaded && newResults && route !== "settings") loadTasks();
         queueLoaded = true;
         message("queue-error");
     } catch (error) {
-        message("queue-error", "Queue status unavailable. Retrying automatically.");
+        const unavailable = "Queue status unavailable. Retrying automatically.";
+        byId("tracker-stage").textContent = "Queue unavailable";
+        byId("tracker-meta").textContent = "Retrying automatically…";
+        byId("tracker-bar").replaceChildren();
+        byId("tracker-detail").replaceChildren(element("p", null, unavailable));
+        lastSnapshot = "";
+        message("queue-error", unavailable);
     } finally {
         queueRequestInFlight = false;
     }
