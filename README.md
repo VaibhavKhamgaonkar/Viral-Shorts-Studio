@@ -75,7 +75,13 @@ The studio uses NVIDIA H.264 encoding when available and falls back to CPU encod
 
 **Publishing destinations** saves YouTube channel, Instagram profile, and Facebook Page details on this machine. **Future default** records which accounts you want preselected when direct uploads are available. Account connection and automatic uploads are unavailable in this version.
 
-For now, open **Clip library**, download the **MP4**, and use the **AI posting kit** to copy the title or caption. Then upload through [YouTube Studio](https://studio.youtube.com/), [Instagram](https://www.instagram.com/), or [Meta Business Suite](https://business.facebook.com/). Direct uploads will require the studio to implement YouTube authorization and the relevant Meta publishing permissions. [YouTube upload API](https://developers.google.com/youtube/data/guides/uploading_a_video) · [Instagram publishing](https://developers.facebook.com/documentation/instagram-platform/content-publishing) · [Facebook Page Reels](https://developers.facebook.com/documentation/video-api/guides/reels-publishing)
+### Upload a YouTube Short manually
+
+1. In **Clip library**, find the clip and select **Show in folder**. Windows File Explorer selects the MP4 named on that clip card. Use **MP4** on the card if you want a downloaded copy.
+2. Sign in to the correct channel in [YouTube Studio](https://studio.youtube.com/), choose **Create → Upload videos**, and select that MP4. You can drag the selected file from File Explorer into the upload window. YouTube accepts square or vertical Shorts up to three minutes. [Upload Shorts from a computer](https://support.google.com/youtube/answer/12779649?hl=en)
+3. Review and copy the title and description from **AI posting kit** into their separate fields. Set the audience, review **Checks**, and select **Private** if you want to review the result before making it public. [YouTube upload settings](https://support.google.com/youtube/answer/57407?hl=en)
+
+Use the same exported MP4 for manual uploads through [Instagram](https://www.instagram.com/) or [Meta Business Suite](https://business.facebook.com/). [Instagram publishing](https://developers.facebook.com/documentation/instagram-platform/content-publishing) · [Facebook Page Reels](https://developers.facebook.com/documentation/video-api/guides/reels-publishing)
 
 ### YouTube direct-upload pilot
 

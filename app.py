@@ -111,6 +111,17 @@ def task_folder(name):
     return path
 
 
+def exported_video(folder_name, filename):
+    folder = task_folder(folder_name)
+    name = Path(filename)
+    if name.name != filename or name.suffix.lower() != ".mp4" or filename.startswith(("source-", "slice_")):
+        raise HTTPException(404, "Exported clip not found.")
+    video = (folder / name).resolve()
+    if video.parent != folder or video.name != filename or not video.is_file():
+        raise HTTPException(404, "Exported clip not found.")
+    return video
+
+
 def read_json(path):
     try:
         value = json.loads(path.read_text(encoding="utf-8-sig"))
@@ -267,6 +278,17 @@ def open_folder(folder_name: str):
     return open_in_explorer(task_folder(folder_name))
 
 
+@app.post("/api/reveal_clip/{folder_name}/{filename}")
+def reveal_clip(folder_name: str, filename: str):
+    video = exported_video(folder_name, filename)
+    try:
+        explorer = Path(os.environ["SystemRoot"]) / "explorer.exe"
+        os.startfile(str(explorer), arguments=f'/select,"{video}"')
+    except (OSError, AttributeError, KeyError) as error:
+        raise HTTPException(500, "Could not select the clip in Windows File Explorer.") from error
+    return {"status": "ok"}
+
+
 @app.post("/api/upload_video")
 def upload_video_endpoint(file: UploadFile = File(...)):
     name = Path(file.filename or "")
@@ -408,11 +430,8 @@ def search_library(
 
 @app.post("/api/posting-kit/{folder_name}/{filename}")
 def refresh_posting_kit(folder_name: str, filename: str, request: PostingKitRequest):
-    folder = task_folder(folder_name)
-    video = (folder / filename).resolve()
-    if (video.parent != folder or video.suffix.lower() != ".mp4"
-            or video.name.startswith(("source-", "slice_")) or not video.is_file()):
-        raise HTTPException(404, "Exported clip not found.")
+    video = exported_video(folder_name, filename)
+    folder = video.parent
     if not POSTING_KIT_LOCK.acquire(blocking=False):
         raise HTTPException(409, "A posting kit is already generating. Try again when it finishes.")
 

@@ -75,7 +75,7 @@
         </header>
 
         <div id="clip-workspace" class="workspace-grid">
-            <section class="panel create-panel" id="create-panel" aria-labelledby="source-title">
+            <section class="panel panel-plum create-panel" id="create-panel" aria-labelledby="source-title">
                 <form id="create-form">
                     <h2 id="source-title">Video source</h2>
                     <div class="segmented" aria-label="Video source type" role="group">
@@ -249,14 +249,14 @@
                 </div>
             </section>
 
-            <section class="panel settings-panel" aria-labelledby="publish-title">
+            <section class="panel panel-plum settings-panel" aria-labelledby="publish-title">
                 <h2 id="publish-title">Publishing destinations</h2>
                 <p class="section-copy">Account connection and automatic uploads are unavailable in this version. The details below are saved locally.</p>
                 <p class="section-copy" id="publish-default-help"><strong>Future default</strong> saves which accounts you want preselected once direct uploads are available.</p>
                 <div class="destination"><div class="field"><label for="youtube-account">YouTube channel</label><input id="youtube-account" maxlength="150" placeholder="@channel"></div><label class="check"><input type="checkbox" id="youtube-enabled" aria-label="YouTube future default" aria-describedby="publish-default-help"> Future default</label></div>
                 <div class="destination"><div class="field"><label for="instagram-account">Instagram profile</label><input id="instagram-account" maxlength="150" placeholder="@profile"></div><label class="check"><input type="checkbox" id="instagram-enabled" aria-label="Instagram future default" aria-describedby="publish-default-help"> Future default</label></div>
                 <div class="destination"><div class="field"><label for="facebook-account">Facebook Page</label><input id="facebook-account" maxlength="150" placeholder="Page name or ID"></div><label class="check"><input type="checkbox" id="facebook-enabled" aria-label="Facebook future default" aria-describedby="publish-default-help"> Future default</label></div>
-                <p class="publishing-help">To publish now, download the <strong>MP4</strong> from <a href="/library">Clip library</a>, open the <strong>AI posting kit</strong>, and upload through the platform.</p>
+                <p class="publishing-help">Select <strong>Show in folder</strong> on a clip in the <a href="/library">Clip library</a>. Upload the selected MP4 through <a href="https://studio.youtube.com/" target="_blank" rel="noopener noreferrer">YouTube Studio</a> and use the <strong>AI posting kit</strong> for the title and description.</p>
             </section>
 
             <div class="settings-actions"><button id="save-settings" class="button button-primary" type="submit">Save settings <svg class="icon"><use href="#i-arrow"/></svg></button><p id="settings-message" class="form-message" role="status" hidden></p></div>

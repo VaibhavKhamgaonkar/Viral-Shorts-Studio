@@ -308,7 +308,8 @@ async function startJob(event) {
 }
 
 function clipCard(clip, folder) {
-    const uri = "/clips/" + encodeURIComponent(folder) + "/" + encodeURIComponent(clip.filename);
+    const clipPath = encodeURIComponent(folder) + "/" + encodeURIComponent(clip.filename);
+    const uri = "/clips/" + clipPath;
     const card = element("article", "clip");
     const video = element("video");
     video.controls = true;
@@ -323,10 +324,20 @@ function clipCard(clip, folder) {
         const range = formatTime(clip.start_time) + " – " + formatTime(clip.end_time);
         body.append(element("p", "clip-time", range + (labels[clip.selection] ? " · " + labels[clip.selection] : "")));
     }
+    body.append(element("code", "clip-filename", clip.filename));
     const actions = element("div", "clip-actions");
-    const download = link("MP4", uri, "download");
+    const kit = action("", (event) => openPostingKit(clip, folder, event.currentTarget), "copy");
+    const download = link("", uri, "download");
     download.download = clip.filename;
-    actions.append(action("AI posting kit", (event) => openPostingKit(clip, folder, event.currentTarget), "copy"), download);
+    const reveal = action("", async () => {
+        try { await api("/api/reveal_clip/" + clipPath, {method: "POST"}); }
+        catch (error) { toast(error.message); }
+    }, "folder");
+    for (const [control, label] of [[kit, "AI posting kit"], [download, "Download MP4"], [reveal, "Show in folder"]]) {
+        control.dataset.tooltip = label;
+        control.setAttribute("aria-label", label + " · " + clip.filename);
+        actions.append(control);
+    }
     body.append(actions);
     card.append(video, body);
     return card;

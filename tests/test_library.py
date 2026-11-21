@@ -5,6 +5,7 @@ from tempfile import TemporaryDirectory
 from threading import Lock
 import unittest
 from unittest.mock import Mock, patch
+from urllib.parse import quote
 
 from fastapi.testclient import TestClient
 
@@ -74,6 +75,22 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(data["batches"][0]["task_id"], "id0")
         data = self.results(size=3, page=99, sort="oldest")
         self.assertEqual((data["page"], data["batches"][0]["task_id"]), (3, "id6"))
+
+    def test_reveal_selects_the_exact_export(self):
+        batch = "Workshop, local_[bike]"
+        self.clip(batch, 1010)
+        selected = self.clip(batch, 1020, filename="clip-02, final")
+        self.clip(batch, 1030, filename="source-original")
+        url = "/api/reveal_clip/" + quote(batch) + "/"
+        system_root = str(self.root / "Windows")
+        with patch.dict(os.environ, {"SystemRoot": system_root}), patch.object(os, "startfile", create=True) as explorer:
+            response = self.client.post(url + quote(selected.name))
+            self.assertEqual(response.status_code, 200, response.text)
+            explorer.assert_called_once_with(str(Path(system_root) / "explorer.exe"), arguments=f'/select,"{selected.resolve()}"')
+            explorer.reset_mock()
+            for filename in ("source-original.mp4", "clip-01.json", "missing.mp4"):
+                self.assertEqual(self.client.post(url + filename).status_code, 404)
+            explorer.assert_not_called()
 
     def test_regenerate_requires_context_and_preserves_media(self):
         video = self.clip("Workshop_[bike]", 1010, title="Before", hook="Burned into the export", copy_source="ai")
