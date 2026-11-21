@@ -108,6 +108,8 @@
                             <div class="field"><label for="resolution">Export resolution</label><select id="resolution"><option value="1080">1080 × 1920</option><option value="720">720 × 1280</option></select></div>
                             <div class="field"><label for="playback-speed">Playback speed</label><select id="playback-speed"><option value="0.9">0.9×</option><option value="1" selected>1× (original)</option><option value="1.04">1.04×</option><option value="1.15">1.15×</option></select></div>
                             <div class="field"><label for="job-audio">Audio</label><select id="job-audio"><option value="">Studio default</option><option value="original">Keep source audio</option><option value="mute">Mute source audio</option></select></div>
+                            <div class="field"><label for="color-look">Color look</label><select id="color-look"><option value="original">Original</option><option value="warm">Warm</option><option value="monochrome">Black and white</option></select></div>
+                            <div class="field"><label for="clip-fades">Start and end</label><select id="clip-fades"><option value="cut">Hard cuts</option><option value="fade">Fade picture and sound</option></select></div>
                         </div>
                         <div class="job-checks">
                             <label class="check"><input id="job-captions" type="checkbox" checked> Burn in captions</label>
@@ -115,6 +117,11 @@
                             <label class="check"><input id="mirror" type="checkbox"> Mirror horizontally</label>
                             <label class="check"><input id="color-grade" type="checkbox"> Boost color and contrast</label>
                             <label class="check"><input id="auto-delete" type="checkbox"> Clear local source copy after export</label>
+                        </div>
+                        <div class="field opening-field">
+                            <label for="custom-opening-text">Custom opening text <span class="optional-label">optional</span></label>
+                            <input type="text" id="custom-opening-text" maxlength="90" aria-describedby="custom-opening-help" placeholder="Add context in your own words">
+                            <small id="custom-opening-help">Shown in place of the suggested hook when Show opening text is on.</small>
                         </div>
                     </fieldset>
                     <button id="generate" class="button button-primary generate-button" type="submit"><svg class="icon"><use href="#i-spark"/></svg> Generate clips <svg class="icon end-icon"><use href="#i-arrow"/></svg></button>
@@ -186,10 +193,12 @@
 
             <section class="panel settings-panel" aria-labelledby="publish-title">
                 <h2 id="publish-title">Publishing destinations</h2>
-                <p class="section-copy">Save accounts for a future publishing connection. Account authorization and uploads are pending.</p>
-                <div class="destination"><div class="field"><label for="youtube-account">YouTube channel</label><input id="youtube-account" maxlength="150" placeholder="@channel"></div><label class="check"><input type="checkbox" id="youtube-enabled"> Include</label></div>
-                <div class="destination"><div class="field"><label for="instagram-account">Instagram profile</label><input id="instagram-account" maxlength="150" placeholder="@profile"></div><label class="check"><input type="checkbox" id="instagram-enabled"> Include</label></div>
-                <div class="destination"><div class="field"><label for="facebook-account">Facebook Page</label><input id="facebook-account" maxlength="150" placeholder="Page name or ID"></div><label class="check"><input type="checkbox" id="facebook-enabled"> Include</label></div>
+                <p class="section-copy">Account connection and automatic uploads are unavailable in this version. The details below are saved locally.</p>
+                <p class="section-copy" id="publish-default-help"><strong>Future default</strong> saves which accounts you want preselected once direct uploads are available.</p>
+                <div class="destination"><div class="field"><label for="youtube-account">YouTube channel</label><input id="youtube-account" maxlength="150" placeholder="@channel"></div><label class="check"><input type="checkbox" id="youtube-enabled" aria-label="YouTube future default" aria-describedby="publish-default-help"> Future default</label></div>
+                <div class="destination"><div class="field"><label for="instagram-account">Instagram profile</label><input id="instagram-account" maxlength="150" placeholder="@profile"></div><label class="check"><input type="checkbox" id="instagram-enabled" aria-label="Instagram future default" aria-describedby="publish-default-help"> Future default</label></div>
+                <div class="destination"><div class="field"><label for="facebook-account">Facebook Page</label><input id="facebook-account" maxlength="150" placeholder="Page name or ID"></div><label class="check"><input type="checkbox" id="facebook-enabled" aria-label="Facebook future default" aria-describedby="publish-default-help"> Future default</label></div>
+                <p class="publishing-help">To publish now, download the <strong>MP4</strong> from <a href="/library">Clip library</a>, open <strong>Posting copy</strong>, and upload through the platform.</p>
             </section>
 
             <div class="settings-actions"><button id="save-settings" class="button button-primary" type="submit">Save settings <svg class="icon"><use href="#i-arrow"/></svg></button><p id="settings-message" class="form-message" role="status" hidden></p></div>

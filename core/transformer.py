@@ -13,6 +13,10 @@ GAMEPLAY_DIR = ASSETS_DIR / "gameplay"
 MUSIC_DIR = ASSETS_DIR / "music"
 OUTPUT_DIR = BASE_DIR / "output_clips"
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}
+COLOR_LOOKS = {
+    "warm": "colorbalance=rs=0.035:bs=-0.035:rm=0.05:bm=-0.05:pl=1",
+    "monochrome": "hue=s=0",
+}
 
 
 def get_ffmpeg_cmd():
@@ -79,6 +83,8 @@ def render_viral_clip(
     music_path=None,
     source_audio_path=None,
     output_width=1080,
+    color_look="original",
+    edge_fades=False,
 ):
     input_video = Path(input_video).resolve()
     target = Path(output_folder or OUTPUT_DIR).resolve()
@@ -86,6 +92,7 @@ def render_viral_clip(
     output = target / output_filename
     temporary = output.with_suffix(".rendering")
     duration = end_time - start_time
+    export_duration = duration / audio_tempo
 
     gameplay = asset_files(GAMEPLAY_DIR, {".mp4", ".mkv", ".mov"}) if mode == "split_screen" else []
     music = asset_files(MUSIC_DIR, AUDIO_EXTENSIONS) if audio_mode == "legacy_mix" else []
@@ -106,7 +113,7 @@ def render_viral_clip(
 
     music_input = None
     if music_path and audio_mode in {"replace", "legacy_mix"}:
-        command += ["-stream_loop", "-1", "-t", str(duration / audio_tempo), "-i", str(Path(music_path).resolve())]
+        command += ["-stream_loop", "-1", "-t", str(export_duration), "-i", str(Path(music_path).resolve())]
         music_input = next_input
         next_input += 1
 
@@ -129,6 +136,8 @@ def render_viral_clip(
         ])
 
     video_filters = [f"eq=contrast={color_contrast}:saturation={color_saturation}"]
+    if look := COLOR_LOOKS.get(color_look):
+        video_filters.append(look)
     if subtitles_ass_path:
         subtitles = Path(subtitles_ass_path).resolve()
         if subtitles.parent == target:
@@ -141,6 +150,13 @@ def render_viral_clip(
         video_filters.append(f"scale={output_width}:{output_width * 16 // 9}")
     if audio_tempo != 1:
         video_filters.append(f"setpts=PTS/{audio_tempo}")
+    if edge_fades:
+        fade_length = min(0.4, export_duration / 3)
+        fade_out = export_duration - fade_length
+        video_filters.extend([
+            f"fade=t=in:st=0:d={fade_length:.6f}",
+            f"fade=t=out:st={fade_out:.6f}:d={fade_length:.6f}",
+        ])
     filters.append("[layout]" + ",".join(video_filters) + "[video]")
 
     audio_output = None
@@ -156,11 +172,18 @@ def render_viral_clip(
         else:
             audio_output = "[music]"
 
+    if edge_fades and audio_output:
+        filters.append(
+            f"{audio_output}afade=t=in:st=0:d={fade_length:.6f},"
+            f"afade=t=out:st={fade_out:.6f}:d={fade_length:.6f}[faded_audio]"
+        )
+        audio_output = "[faded_audio]"
+
     command += ["-filter_complex_threads", "2", "-filter_complex", ";".join(filters), "-map", "[video]"]
     if audio_output:
         command += ["-map", audio_output, "-c:a", "aac", "-b:a", "192k"]
     command += [
-        "-t", str(duration / audio_tempo), "-c:v", "libx264", "-preset", "veryfast",
+        "-t", str(export_duration), "-c:v", "libx264", "-preset", "veryfast",
         "-crf", "22", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-f", "mp4", str(temporary),
     ]
 

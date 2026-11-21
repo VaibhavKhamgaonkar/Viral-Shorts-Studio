@@ -225,6 +225,9 @@ async function startJob(event) {
         playback_speed: Number(byId("playback-speed").value),
         captions: byId("job-captions").checked,
         opening_hook: byId("job-opening-hook").checked,
+        custom_opening_text: byId("custom-opening-text").value.trim(),
+        color_look: byId("color-look").value,
+        edge_fades: byId("clip-fades").value === "fade",
         audio_mode: byId("job-audio").value || null,
     };
     try {
@@ -475,7 +478,7 @@ async function addMusic() {
 const pages = {
     studio: ["Create clips", "Find the best moments in a long video and export them as vertical clips."],
     library: ["Clip library", "Review exports, download MP4s, and copy text for your posts."],
-    settings: ["Studio settings", "Customize new exports and configure your publishing destinations."],
+    settings: ["Studio settings", "Customize new exports and save your publishing preferences."],
 };
 const [title, subtitle] = pages[route];
 document.querySelector('[data-nav="' + route + '"]').setAttribute("aria-current", "page");

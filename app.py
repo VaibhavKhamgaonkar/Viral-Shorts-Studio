@@ -47,6 +47,9 @@ class ClipRequest(BaseModel):
     playback_speed: Literal[0.9, 1, 1.04, 1.15] | None = None
     captions: bool | None = None
     opening_hook: bool | None = None
+    custom_opening_text: str = Field(default="", max_length=90)
+    color_look: Literal["original", "warm", "monochrome"] = "original"
+    edge_fades: bool = False
     audio_mode: Literal["original", "mute"] | None = None
     auto_delete_source: bool | None = None
     mirror: bool = False

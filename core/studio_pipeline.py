@@ -130,11 +130,14 @@ def run_job(job_id, request, settings, update):
                 track = music.get(copy["music_track"])
                 audio_mode = "replace" if track else "original"
 
+            opening_text = " ".join(request.custom_opening_text.split()) or copy["hook"]
+            if not settings["opening_hook"]:
+                opening_text = ""
             ass_path = task_dir / f"{stem}.ass"
             generate_ass_subtitles(
                 excerpt, start, end, ass_path, captions=settings["captions"], caption_style=settings["caption_style"],
                 caption_color=settings["caption_color"], brand_name=settings["brand_name"],
-                opening_hook=copy["hook"] if settings["opening_hook"] else "",
+                opening_hook=opening_text,
             )
             width = request.output_resolution
             update("Rendering clip", f"Exporting clip {index} of {len(clips)} as a {width} × {width * 16 // 9} MP4.")
@@ -144,9 +147,11 @@ def run_job(job_id, request, settings, update):
                 audio_tempo=request.playback_speed or (settings["audio_tempo"] if request.audio_speed else 1),
                 color_contrast=settings["color_contrast"] if request.color_grade else 1,
                 color_saturation=settings["color_saturation"] if request.color_grade else 1,
+                color_look=request.color_look, edge_fades=request.edge_fades,
                 audio_mode=audio_mode, music_path=track, source_audio_path=input_audio, output_width=width,
             )
-            generate_clip_metadata(clip | copy | {"applied_music": track.name if track else ""}, source_title, output, source_url)
+            metadata = clip | copy | {"hook": opening_text or copy["hook"], "applied_music": track.name if track else ""}
+            generate_clip_metadata(metadata, source_title, output, source_url)
         finally:
             slice_path.unlink(missing_ok=True)
 
