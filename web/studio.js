@@ -203,11 +203,14 @@ function formatTime(value) {
     return hours ? hours + ":" + String(minutes).padStart(2, "0") + ":" + remainder : minutes + ":" + remainder;
 }
 
-async function startJob(event) {
-    event.preventDefault();
-    byId("generate").disabled = true;
-    byId("view-submitted-task").hidden = true;
-    message("form-message");
+let submittingClip = false;
+const submittedForms = new Map(JSON.parse(sessionStorage.getItem("studio-submitted-forms") || "[]"));
+
+function saveSubmittedForms() {
+    sessionStorage.setItem("studio-submitted-forms", JSON.stringify([...submittedForms]));
+}
+
+function readClipForm() {
     const request = {
         source_type: sourceType,
         selection: byId("selection").value,
@@ -225,29 +228,67 @@ async function startJob(event) {
         edge_fades: byId("clip-fades").value === "fade",
         audio_mode: byId("job-audio").value || null,
     };
-    try {
-        if (request.selection === "range") {
-            request.start_time = parseTime(byId("clip-start").value);
-            request.end_time = parseTime(byId("clip-end").value);
-            if (request.end_time - request.start_time < 1 || request.end_time - request.start_time > 600) {
-                throw new Error("Choose a time range between 1 second and 10 minutes.");
-            }
-        } else {
-            request.clip_count = byId("job-count").valueAsNumber;
+    if (request.selection === "range") {
+        request.start_time = parseTime(byId("clip-start").value);
+        request.end_time = parseTime(byId("clip-end").value);
+        if (request.end_time - request.start_time < 1 || request.end_time - request.start_time > 600) {
+            throw new Error("Choose a time range between 1 second and 10 minutes.");
         }
-        if (sourceType === "upload") {
-            const file = byId("video-file").files[0];
-            if (!file) throw new Error("Choose a video to upload.");
+        delete request.clip_length;
+    } else {
+        request.clip_count = byId("job-count").valueAsNumber;
+    }
+    const file = sourceType === "upload" ? byId("video-file").files[0] : null;
+    if (!file && sourceType === "upload") throw new Error("Choose a video to upload.");
+    if (sourceType === "url") request.url = byId("youtube-url").value.trim();
+    if (!request.opening_hook) request.custom_opening_text = "";
+    const key = JSON.stringify([request, file && [file.name, file.size, file.lastModified]]);
+    return {request, file, key};
+}
+
+function syncQueueSubmit(jobs, pollStartedAt) {
+    if (route !== "studio") return;
+    if (jobs) {
+        const active = new Set(jobs.filter(job => job.status === "queued" || job.status === "running").map(job => job.job_id));
+        const priorCount = submittedForms.size;
+        for (const [key, job] of submittedForms) {
+            if (job.submittedAt <= pollStartedAt && !active.has(job.id)) submittedForms.delete(key);
+        }
+        if (priorCount !== submittedForms.size) saveSubmittedForms();
+    }
+    let duplicate;
+    try { duplicate = submittedForms.get(readClipForm().key); } catch { /* Built-in validation handles incomplete input. */ }
+    byId("generate").disabled = submittingClip || Boolean(duplicate);
+    byId("generate-label").textContent = duplicate ? "Already queued" : "Queue clips";
+    if (duplicate && !submittingClip) {
+        const viewTask = byId("view-submitted-task");
+        const confirmation = "Queued · #" + duplicate.id;
+        if (byId("form-message").textContent !== confirmation) message("form-message", confirmation, true);
+        viewTask.onclick = () => openTasks(duplicate.id);
+        viewTask.hidden = false;
+    }
+}
+
+async function startJob(event) {
+    event.preventDefault();
+    if (byId("generate").disabled) return;
+    submittingClip = true;
+    syncQueueSubmit();
+    byId("view-submitted-task").hidden = true;
+    message("form-message");
+    try {
+        const {request, file, key} = readClipForm();
+        if (file) {
             if (savedUpload?.file !== file) {
                 message("form-message", "Copying " + file.name + " into the local workspace…", true);
                 const upload = await api("/api/upload_video", fileRequest(file));
                 savedUpload = {file, path: upload.file_path};
             }
             request.file_path = savedUpload.path;
-        } else {
-            request.url = byId("youtube-url").value.trim();
         }
         const job = await api("/api/generate", jsonRequest("POST", request));
+        submittedForms.set(key, {id: job.job_id, submittedAt: performance.timeOrigin + performance.now()});
+        saveSubmittedForms();
         message("form-message", "Queued · #" + job.job_id, true);
         const viewTask = byId("view-submitted-task");
         viewTask.onclick = () => openTasks(job.job_id);
@@ -257,7 +298,8 @@ async function startJob(event) {
     } catch (error) {
         message("form-message", error.message);
     } finally {
-        byId("generate").disabled = false;
+        submittingClip = false;
+        syncQueueSubmit();
     }
 }
 
@@ -497,8 +539,8 @@ byId("nav-toggle").addEventListener("click", () => {
     localStorage.setItem("studio-nav-collapsed", String(collapsed));
 });
 byId("cache-button").addEventListener("click", openCache);
-byId("source-url").addEventListener("click", () => setSource("url"));
-byId("source-upload").addEventListener("click", () => setSource("upload"));
+byId("source-url").addEventListener("click", () => { setSource("url"); syncQueueSubmit(); });
+byId("source-upload").addEventListener("click", () => { setSource("upload"); syncQueueSubmit(); });
 byId("selection").addEventListener("change", showRangeOptions);
 byId("refresh").addEventListener("click", loadTasks);
 byId("start-link").addEventListener("click", (event) => {
@@ -507,10 +549,13 @@ byId("start-link").addEventListener("click", (event) => {
     byId(sourceType === "url" ? "youtube-url" : "video-file").focus();
 });
 createForm.addEventListener("submit", startJob);
+createForm.addEventListener("input", () => syncQueueSubmit());
+createForm.addEventListener("change", () => syncQueueSubmit());
 settingsForm.addEventListener("submit", savePreferences);
 byId("music-mode").addEventListener("change", showTrackField);
 byId("add-music").addEventListener("click", addMusic);
 
-loadPreferences().catch((error) => message(route === "settings" ? "settings-message" : "form-message", error.message));
+loadPreferences().then(() => syncQueueSubmit())
+    .catch((error) => message(route === "settings" ? "settings-message" : "form-message", error.message));
 loadAI();
 loadStorage();

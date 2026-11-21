@@ -6,7 +6,7 @@ import unittest
 from contextlib import closing
 from pathlib import Path
 
-from core.job_queue import JobQueue
+from core.job_queue import DuplicateJob, JobQueue
 
 
 class JobQueueTests(unittest.TestCase):
@@ -36,8 +36,16 @@ class JobQueueTests(unittest.TestCase):
 
             queue.start(processor)
             try:
-                first = queue.submit("First", {"source_type": "url", "mode": "hold"}, {})
-                self.wait_for_status(queue, first, "running")
+                def identity(payload, settings):
+                    return payload, settings
+
+                request = {"source_type": "url", "mode": "hold"}
+                first = queue.submit("First", request, {}, identity=identity)
+                running = self.wait_for_status(queue, first, "running")
+                self.assertGreaterEqual(running["started_at"], running["queued_at"])
+                with self.assertRaises(DuplicateJob) as duplicate:
+                    queue.submit("Same task", request, {}, identity=identity)
+                self.assertEqual(duplicate.exception.job_id, first)
                 second = queue.submit("Second", {"source_type": "url", "mode": "next"}, {"captions": True})
                 third = queue.submit("Third", {"source_type": "url", "mode": "last"}, {"captions": True})
                 active = queue.snapshot()
@@ -60,7 +68,10 @@ class JobQueueTests(unittest.TestCase):
                 self.assertGreater(completed["finished_at"], 0)
                 self.wait_for_status(queue, third, "completed")
                 self.assertEqual(processed, [first, second, third])
-                self.assertEqual(queue.get(first)["activity"][0]["stage"], "Rendering clip")
+                failed = queue.get(first)
+                self.assertEqual(failed["activity"][-1]["stage"], "Rendering clip")
+                self.assertGreaterEqual(failed["finished_at"], failed["activity"][-1]["started_at"])
+                self.assertEqual(failed["activity"][-1]["phase"], "export")
                 self.assertTrue(queue.remove_finished(first))
                 self.assertTrue(queue.remove_finished(second))
                 self.assertFalse(queue.remove_finished(first))
@@ -86,6 +97,23 @@ class JobQueueTests(unittest.TestCase):
                 self.assertEqual(self.wait_for_status(restored, waiting, "completed")["clip_count"], 1)
             finally:
                 restored.stop()
+
+    def test_starts_with_pre_timing_queue_database(self):
+        with tempfile.TemporaryDirectory() as temp:
+            queue = JobQueue(Path(temp) / "jobs.sqlite3")
+            queue.start(lambda *_: 1)
+            queue.stop()
+            job_id = queue.submit("Older entry", {"source_type": "url"}, {})
+            with closing(sqlite3.connect(queue.path)) as db, db:
+                for name in ("queued_at", "started_at", "updated_at"):
+                    db.execute(f"ALTER TABLE jobs DROP COLUMN {name}")
+            queue.start(lambda *_: 1)
+            try:
+                stored = self.wait_for_status(queue, job_id, "completed")
+                self.assertIsNone(stored["queued_at"])
+                self.assertGreaterEqual(stored["finished_at"], stored["started_at"])
+            finally:
+                queue.stop()
 
 
 if __name__ == "__main__":

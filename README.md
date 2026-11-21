@@ -53,7 +53,11 @@ python -m venv venv
 
 For YouTube videos with usable captions, the studio scans the transcript in overlapping windows and asks yt-dlp for selected ranges. If a range request fails it can use a full download. Highlights depend on spoken content and the available transcript. Use an exact range for a moment you already know.
 
-One job runs at a time to share local resources. Waiting jobs and recent status survive a studio restart. Resubmit a job that was interrupted while running. The queue database lives under the local `data/` folder.
+One job runs at a time to share local resources. The form blocks a repeat submission while an identical job is waiting or running. Change the clip options or source to queue a different job. The Tasks drawer shows queue wait, processing time, and individual stage timings. Jobs created before timing was added have no historical durations. If the studio is interrupted, a failed task's recorded time ends at its last recorded update.
+
+Waiting jobs and recent status survive a studio restart. Resubmit a job that was interrupted while running. The queue database lives under the local `data/` folder.
+
+The studio uses NVIDIA H.264 encoding when available and falls back to CPU encoding. The blurred background is processed at a lower resolution, and the foreground uses the selected export size. The rendering step identifies the encoding path in the Tasks drawer.
 
 ## Studio settings
 

@@ -26,11 +26,22 @@ CREATE TABLE IF NOT EXISTS jobs (
     progress INTEGER,
     activity TEXT NOT NULL,
     clip_count INTEGER NOT NULL DEFAULT 0,
+    queued_at REAL,
+    started_at REAL,
+    updated_at REAL,
     finished_at REAL
 )
 """
 
-PUBLIC_FIELDS = "job_id, source, status, phase, stage, detail, progress, activity, clip_count, finished_at"
+PUBLIC_FIELDS = (
+    "job_id, source, status, phase, stage, detail, progress, activity, clip_count, queued_at, started_at, finished_at"
+)
+
+
+class DuplicateJob(Exception):
+    def __init__(self, job_id):
+        super().__init__(job_id)
+        self.job_id = job_id
 
 
 class JobQueue:
@@ -66,8 +77,12 @@ class JobQueue:
 
             with self._db() as db:
                 db.execute(SCHEMA)
+                columns = {column["name"] for column in db.execute("PRAGMA table_info(jobs)")}
+                for column in ("queued_at", "started_at", "updated_at"):
+                    if column not in columns:
+                        db.execute(f"ALTER TABLE jobs ADD COLUMN {column} REAL")
                 db.execute(
-                    "UPDATE jobs SET status='failed', detail=?, progress=NULL, finished_at=?, request='{}', "
+                    "UPDATE jobs SET status='failed', detail=?, progress=NULL, finished_at=COALESCE(updated_at, ?), request='{}', "
                     "settings='{}', source_file='' WHERE status='running'",
                     ("The studio stopped before this job finished. Submit the source again to retry.", time.time()),
                 )
@@ -84,17 +99,24 @@ class JobQueue:
         if self._worker:
             self._worker.join(timeout=1)
 
-    def submit(self, source, request, settings):
+    def submit(self, source, request, settings, *, identity=None):
         job_id = uuid.uuid4().hex[:8]
         source_file = request["file_path"] if request["source_type"] == "upload" else ""
         with self.gate, self._db() as db:
+            if identity:
+                key = identity(request, settings)
+                for active in db.execute(
+                    "SELECT job_id, request, settings FROM jobs WHERE status IN ('queued','running') ORDER BY sequence"
+                ):
+                    if identity(json.loads(active["request"]), json.loads(active["settings"])) == key:
+                        raise DuplicateJob(active["job_id"])
             if source_file and not Path(source_file).is_file():
                 raise FileNotFoundError("That local source is gone. Upload the video again.")
             db.execute(
-                "INSERT INTO jobs (job_id,source,source_file,request,settings,status,phase,stage,detail,activity) "
-                "VALUES (?,?,?,?,?,'queued','','Queued',?,'[]')",
+                "INSERT INTO jobs (job_id,source,source_file,request,settings,status,phase,stage,detail,activity,queued_at) "
+                "VALUES (?,?,?,?,?,'queued','','Queued',?,'[]',?)",
                 (job_id, source, source_file, json.dumps(request), json.dumps(settings),
-                 "Waiting for the next available render slot."),
+                 "Waiting for the next available render slot.", time.time()),
             )
         self._wake.set()
         return job_id
@@ -113,9 +135,15 @@ class JobQueue:
                         "SELECT job_id, request, settings FROM jobs WHERE status='queued' ORDER BY sequence LIMIT 1"
                     ).fetchone()
                 if job:
+                    now = time.time()
+                    event = {
+                        "phase": "source", "stage": "Preparing source",
+                        "detail": "Opening the video source.", "started_at": now,
+                    }
                     db.execute(
-                        "UPDATE jobs SET status='running',phase='source',stage='Preparing source',detail=? WHERE job_id=?",
-                        ("Opening the video source.", job["job_id"]),
+                        "UPDATE jobs SET status='running',phase=?,stage=?,detail=?,activity=?,started_at=?,updated_at=? "
+                        "WHERE job_id=?",
+                        (event["phase"], event["stage"], event["detail"], json.dumps([event]), now, now, job["job_id"]),
                     )
             if not job:
                 self._wake.wait()
@@ -135,15 +163,15 @@ class JobQueue:
             row = db.execute("SELECT activity FROM jobs WHERE job_id=?", (job_id,)).fetchone()
             activity = json.loads(row["activity"])
             previous = activity[-1] if activity else None
-            event = {"stage": stage, "detail": detail}
-            if not previous or previous["stage"] != stage:
-                activity.append(event)
+            now = time.time()
+            if not previous or (previous.get("phase"), previous["stage"]) != (phase, stage):
+                activity.append({"phase": phase, "stage": stage, "detail": detail, "started_at": now})
             elif progress is None:
-                activity[-1] = event
+                previous["detail"] = detail
             db.execute(
-                "UPDATE jobs SET phase=?, stage=?, detail=?, progress=?, source=COALESCE(?, source), activity=? "
+                "UPDATE jobs SET phase=?, stage=?, detail=?, progress=?, source=COALESCE(?, source), activity=?, updated_at=? "
                 "WHERE job_id=?",
-                (phase, stage, detail, progress, source, json.dumps(activity[-36:]), job_id),
+                (phase, stage, detail, progress, source, json.dumps(activity), now, job_id),
             )
 
     def _finish(self, job_id, status, detail, count):

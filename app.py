@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shutil
 import threading
 import time
@@ -7,7 +8,7 @@ import uuid
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import Literal
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import av
 import requests
@@ -20,7 +21,7 @@ from pydantic import BaseModel, Field, model_validator
 from config.settings import load_settings, save_settings
 from config.studio import Layout, StudioSettings, studio_settings
 from core.downloader import DOWNLOADS_DIR, clear_all_downloads_detailed, get_downloads_storage_info, sanitize_filename
-from core.job_queue import JobQueue
+from core.job_queue import DuplicateJob, JobQueue
 from core.studio_pipeline import run_job
 from core.transformer import AUDIO_EXTENSIONS, MUSIC_DIR, OUTPUT_DIR, asset_files
 
@@ -333,6 +334,37 @@ def process_job(job_id, payload, preferences):
     return run_job(job_id, request, settings, update, cleanup)
 
 
+def clip_job_identity(request, settings):
+    if request["source_type"] == "url":
+        url = urlparse(request["url"])
+        route = url.path.strip("/").split("/")
+        if url.hostname == "youtu.be":
+            video_id = route[0]
+        elif url.path == "/watch":
+            video_id = parse_qs(url.query).get("v", [""])[0]
+        elif len(route) == 2 and route[0] in {"shorts", "embed", "live"}:
+            video_id = route[1]
+        else:
+            video_id = ""
+        source = video_id if re.fullmatch(r"[\w-]{11}", video_id, flags=re.ASCII) else url._replace(fragment="").geturl()
+    else:
+        source = os.path.normcase(request["file_path"])
+
+    exact_range = request["selection"] == "range"
+    options = {name: request.get(name) for name in (
+        "source_type", "selection", "mode", "output_resolution", "color_look", "edge_fades",
+        "auto_delete_source", "mirror", "color_grade",
+    )}
+    options["playback_speed"] = request.get("playback_speed") or (settings.get("audio_tempo") if request.get("audio_speed") else 1)
+    options["opening_text"] = " ".join(request.get("custom_opening_text", "").split()) if settings.get("opening_hook") else ""
+    if exact_range:
+        options.update(start=request["start_time"], end=request["end_time"])
+        settings = {name: value for name, value in settings.items() if name not in {"clip_length", "max_clips_to_generate"}}
+    else:
+        options["length"] = request.get("clip_length")
+    return source, options, settings
+
+
 @app.post("/api/generate")
 def create_job(request: ClipRequest):
     settings = load_settings()
@@ -359,7 +391,9 @@ def create_job(request: ClipRequest):
 
     source = request.url if request.source_type == "url" else Path(request.file_path).stem.rsplit("_", 1)[0]
     try:
-        job_id = JOB_QUEUE.submit(source, request.model_dump(), effective)
+        job_id = JOB_QUEUE.submit(source, request.model_dump(), effective, identity=clip_job_identity)
+    except DuplicateJob as error:
+        return {"job_id": error.job_id, "duplicate": True}
     except FileNotFoundError as error:
         raise HTTPException(422, str(error)) from error
     return {"job_id": job_id}

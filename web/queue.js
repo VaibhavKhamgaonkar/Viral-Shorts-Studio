@@ -14,16 +14,54 @@ let queueRequest;
 let queueLoaded = false;
 let latestFinishedAt = Date.now() / 1000;
 
-function taskStages(job) {
+function taskClock(seconds, since = null) {
+    const clock = element("span", "task-clock");
+    clock.dataset.seconds = Math.max(0, seconds);
+    if (Number.isFinite(since)) clock.dataset.since = since;
+    updateTaskClock(clock, Date.now() / 1000);
+    return clock;
+}
+
+function updateTaskClock(clock, now) {
+    const elapsed = Number(clock.dataset.seconds) + (clock.dataset.since ? Math.max(0, now - Number(clock.dataset.since)) : 0);
+    const label = formatTime(elapsed);
+    if (clock.textContent !== label) clock.textContent = label;
+}
+
+function taskTimes(job) {
+    const times = element("div", "task-times");
+    if (Number.isFinite(job.started_at)) {
+        const elapsed = job.finished_at ? job.finished_at - job.started_at : 0;
+        times.append(element("span", null, "Processing "), taskClock(elapsed, job.finished_at ? null : job.started_at));
+    }
+    if (Number.isFinite(job.queued_at)) {
+        const wait = element("span", "task-wait", job.started_at ? " · Waited " : "Waiting ");
+        wait.append(taskClock(job.started_at ? job.started_at - job.queued_at : 0, job.started_at ? null : job.queued_at));
+        times.append(wait);
+        if (Number.isFinite(job.finished_at)) {
+            times.append(element("span", null, " · Total "), taskClock(job.finished_at - job.queued_at));
+        }
+    }
+    return times;
+}
+
+function taskStages(job, history) {
     const steps = element("ol", "queue-steps");
     steps.setAttribute("aria-label", "Task stages");
     const current = phases.findIndex(([key]) => key === job.phase);
     for (const [index, [, title]] of phases.entries()) {
         const reached = index === current;
-        const state = index < current ? "Done" : reached ? "In progress" : "Remaining";
-        const step = element("li", index < current ? "complete" : "");
-        if (reached) step.setAttribute("aria-current", "step");
-        step.append(element("span", null, title), element("span", "step-state", state));
+        const done = index < current || job.status === "completed";
+        const state = done ? "Done" : reached ? (job.status === "failed" ? "Stopped" : "In progress") : "Remaining";
+        const step = element("li", done ? "complete" : "");
+        if (reached && job.status === "running") step.setAttribute("aria-current", "step");
+        const stepState = element("span", "step-state", state);
+        const events = history.filter(event => event.phase === phases[index][0] && Number.isFinite(event.started_at));
+        if (events.length) {
+            const seconds = events.reduce((total, event) => total + (event.end ? event.end - event.started_at : 0), 0);
+            stepState.append(document.createTextNode(" · "), taskClock(seconds, events.find(event => !event.end)?.started_at));
+        }
+        step.append(element("span", null, title), stepState);
         steps.append(step);
     }
     return steps;
@@ -42,6 +80,11 @@ function queueCard(job, historyOpen) {
     const label = job.status === "queued" && job.position ? "Waiting · #" + job.position : statusLabels[job.status];
     heading.append(name, element("span", "queue-status", label));
     card.append(heading);
+    const times = taskTimes(job);
+    if (times.childElementCount) card.append(times);
+    const history = job.activity.map((event, index) => ({
+        ...event, end: job.activity[index + 1]?.started_at || job.finished_at,
+    }));
 
     const current = element("div", "queue-current");
     if (job.status === "running") {
@@ -53,7 +96,7 @@ function queueCard(job, historyOpen) {
         meter.max = 100;
         if (measured) meter.value = job.progress;
         meter.setAttribute("aria-label", job.stage + " progress");
-        current.append(line, meter, element("p", null, job.detail), taskStages(job));
+        current.append(line, meter, element("p", null, job.detail), taskStages(job, history));
     } else if (job.status !== "queued") {
         if (job.status === "failed") current.append(element("strong", null, "Stopped during " + job.stage.toLowerCase()));
         current.append(element("p", null, job.detail));
@@ -64,14 +107,23 @@ function queueCard(job, historyOpen) {
         const activity = element("details", "queue-activity");
         activity.open = historyOpen;
         const events = element("ol");
-        for (const event of job.activity) {
+        if (job.status !== "running" && history.some(event => Number.isFinite(event.started_at))) {
+            activity.append(taskStages(job, history));
+        }
+        for (const event of history) {
             const row = element("li");
-            row.append(element("strong", null, event.stage), document.createTextNode(" · " + event.detail));
+            row.append(element("strong", null, event.stage));
+            if (Number.isFinite(event.started_at)) {
+                row.append(document.createTextNode(" · "), taskClock(event.end ? event.end - event.started_at : 0,
+                    event.end ? null : event.started_at));
+            }
+            row.append(document.createTextNode(" · " + event.detail));
             events.append(row);
         }
         const summary = element("summary", null, "Stage history");
         summary.dataset.queueControl = "history";
-        activity.append(summary, events);
+        activity.prepend(summary);
+        activity.append(events);
         card.append(activity);
     }
     if (job.status === "completed" || job.status === "failed") {
@@ -176,6 +228,7 @@ async function refreshQueueAfterRemoval(jobId) {
 }
 
 async function loadQueue() {
+    const pollStartedAt = performance.timeOrigin + performance.now();
     let jobs;
     try {
         jobs = await api("/api/jobs", {cache: "no-store"});
@@ -198,6 +251,7 @@ async function loadQueue() {
     sessionStorage.setItem("studio-queue-status", JSON.stringify([...knownJobs]));
 
     queueSnapshot = jobs;
+    syncQueueSubmit(jobs, pollStartedAt);
     renderQueue();
     message("queue-error");
     if (finished.length) {
@@ -212,3 +266,7 @@ refreshQueue().then(() => {
     if (route !== "settings") loadTasks();
 });
 setInterval(refreshQueue, 1600);
+setInterval(() => {
+    const now = Date.now() / 1000;
+    tasksDrawer.querySelectorAll(".task-clock[data-since]").forEach(clock => updateTaskClock(clock, now));
+}, 1000);

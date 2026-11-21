@@ -3,6 +3,7 @@ import random
 import shutil
 import subprocess
 import sys
+from functools import lru_cache
 from pathlib import Path
 from tempfile import TemporaryFile
 
@@ -18,6 +19,8 @@ COLOR_LOOKS = {
     "warm": "colorbalance=rs=0.035:bs=-0.035:rm=0.05:bm=-0.05:pl=1",
     "monochrome": "hue=s=0",
 }
+CPU_ENCODER = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "22"]
+NVENC_ENCODER = ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "23", "-b:v", "0"]
 
 
 def get_ffmpeg_cmd():
@@ -66,6 +69,18 @@ def find_companion_audio(video_path):
                  if file.stem == stem or file.stem.startswith(stem + ".f")), None)
 
 
+@lru_cache(maxsize=4)
+def nvenc_available(ffmpeg):
+    try:
+        result = subprocess.run([
+            ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=s=256x256:r=30",
+            "-frames:v", "1", *NVENC_ENCODER, "-f", "null", "-",
+        ], capture_output=True, timeout=5)
+        return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def run_encoder(command, target, duration, progress):
     if progress is None:
         result = subprocess.run(command, cwd=target, capture_output=True, encoding="utf-8", errors="replace")
@@ -106,6 +121,8 @@ def render_viral_clip(
     color_look="original",
     edge_fades=False,
     progress=None,
+    prefer_hardware=False,
+    encoder_status=None,
 ):
     input_video = Path(input_video).resolve()
     target = Path(output_folder or OUTPUT_DIR).resolve()
@@ -114,6 +131,9 @@ def render_viral_clip(
     temporary = output.with_suffix(".rendering")
     duration = end_time - start_time
     export_duration = duration / audio_tempo
+    width = output_width
+    height = width * 16 // 9
+    half_height = height // 2
 
     gameplay = asset_files(GAMEPLAY_DIR, {".mp4", ".mkv", ".mov"}) if mode == "split_screen" else []
     music = asset_files(MUSIC_DIR, AUDIO_EXTENSIONS) if audio_mode == "legacy_mix" else []
@@ -143,16 +163,21 @@ def render_viral_clip(
     if gameplay:
         command += ["-stream_loop", "-1", "-t", str(duration), "-i", str(random.choice(gameplay))]
         filters.extend([
-            f"[0:v]scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960,setsar=1{flip}[top]",
-            f"[{next_input}:v]scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960,setsar=1[bottom]",
+            f"[0:v]scale={width}:{half_height}:force_original_aspect_ratio=increase,crop={width}:{half_height},setsar=1{flip}[top]",
+            f"[{next_input}:v]scale={width}:{half_height}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{half_height},setsar=1[bottom]",
             "[top][bottom]vstack=inputs=2:shortest=1[layout]",
         ])
     elif mode == "vertical_crop":
-        filters.append(f"[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1{flip}[layout]")
+        filters.append(f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},setsar=1{flip}[layout]")
     else:
+        # The background is intentionally soft. Blur fewer pixels, then enlarge it behind the full-size foreground.
+        bg_width, bg_height = width // 4, height // 4
+        radius = max(1, round(width / 1080 * 6))
         filters.extend([
-            "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=25:5,setsar=1[bg]",
-            f"[0:v]scale=1080:1920:force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1{flip}[fg]",
+            f"[0:v]scale={bg_width}:{bg_height}:force_original_aspect_ratio=increase,"
+            f"crop={bg_width}:{bg_height},boxblur={radius}:5,scale={width}:{height},setsar=1[bg]",
+            f"[0:v]scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1{flip}[fg]",
             "[bg][fg]overlay=(W-w)/2:(H-h)/2[layout]",
         ])
 
@@ -167,8 +192,6 @@ def render_viral_clip(
             escaped = subtitles.as_posix().replace(":", r"\:")
         escaped = escaped.replace("'", r"'\''")
         video_filters.append(f"subtitles=filename='{escaped}'")
-    if output_width != 1080:
-        video_filters.append(f"scale={output_width}:{output_width * 16 // 9}")
     if audio_tempo != 1:
         video_filters.append(f"setpts=PTS/{audio_tempo}")
     if edge_fades:
@@ -203,13 +226,20 @@ def render_viral_clip(
     command += ["-filter_complex_threads", "2", "-filter_complex", ";".join(filters), "-map", "[video]"]
     if audio_output:
         command += ["-map", audio_output, "-c:a", "aac", "-b:a", "192k"]
-    command += [
-        "-t", str(export_duration), "-c:v", "libx264", "-preset", "veryfast",
-        "-crf", "22", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-f", "mp4", str(temporary),
-    ]
+    command += ["-t", str(export_duration), "-pix_fmt", "yuv420p", "-movflags", "+faststart"]
+    output_args = ["-f", "mp4", str(temporary)]
 
     try:
-        exit_code, log = run_encoder(command, target, export_duration, progress)
+        use_nvenc = prefer_hardware and nvenc_available(command[0])
+        if encoder_status:
+            encoder_status("NVIDIA hardware" if use_nvenc else "CPU")
+        ceiling = 8 if width == 1080 else 5
+        encoder = NVENC_ENCODER + ["-maxrate", f"{ceiling}M", "-bufsize", f"{ceiling * 2}M"] if use_nvenc else CPU_ENCODER
+        exit_code, log = run_encoder(command + encoder + output_args, target, export_duration, progress)
+        if use_nvenc and exit_code:
+            if encoder_status:
+                encoder_status("CPU fallback")
+            exit_code, log = run_encoder(command + CPU_ENCODER + output_args, target, export_duration, progress)
         if exit_code:
             raise RuntimeError(f"FFmpeg could not render this clip. {log.strip()[-600:]}")
         os.replace(temporary, output)

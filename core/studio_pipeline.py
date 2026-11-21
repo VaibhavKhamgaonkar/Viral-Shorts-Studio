@@ -170,8 +170,15 @@ def run_job(job_id, request, settings, update, cleanup):
             )
             width = request.output_resolution
             stage = "Rendering clip"
-            detail = f"Encoding clip {index} of {len(clips)} as a {width} × {width * 16 // 9} MP4."
-            update("export", stage, detail)
+            label = f"Clip {index} of {len(clips)} · {width} × {width * 16 // 9} MP4"
+            encode_detail = label
+
+            def report_encoder(encoder):
+                nonlocal encode_detail
+                encode_detail = f"{label} · {encoder}"
+                update("export", stage, encode_detail)
+
+            update("export", stage, encode_detail)
             output = render_viral_clip(
                 input_path, offset, offset + end - start, f"{stem}.mp4", output_folder=task_dir,
                 subtitles_ass_path=ass_path, mode=request.mode, enable_hflip=request.mirror,
@@ -180,7 +187,8 @@ def run_job(job_id, request, settings, update, cleanup):
                 color_saturation=settings["color_saturation"] if request.color_grade else 1,
                 color_look=request.color_look, edge_fades=request.edge_fades,
                 audio_mode=audio_mode, music_path=track, source_audio_path=input_audio, output_width=width,
-                progress=lambda percent: update("export", stage, detail, percent),
+                progress=lambda percent: update("export", stage, encode_detail, percent),
+                prefer_hardware=True, encoder_status=report_encoder,
             )
             metadata = clip | copy | {
                 "hook": opening_text or copy["hook"],
