@@ -11,6 +11,10 @@ let savedUpload;
 let noticeTimer;
 let libraryBatchIds = new Set();
 let libraryRequest = 0;
+let libraryPage = 1;
+let librarySearchTimer;
+const libraryFilters = byId("library-filters");
+const exportDate = new Intl.DateTimeFormat(undefined, {dateStyle: "medium", timeStyle: "short"});
 
 function element(tag, className, text) {
     const node = document.createElement(tag);
@@ -303,42 +307,6 @@ async function startJob(event) {
     }
 }
 
-function addCopySection(container, title, content) {
-    if (!content) return;
-    const section = element("section", "dialog-section");
-    section.append(element("h3", null, title), element("p", null, content),
-        action("Copy", () => copyText(content), "copy"));
-    container.push(section);
-}
-
-function openPostCopy(clip) {
-    const contents = [];
-    if (clip.copy_source !== "ai") {
-        const reason = ["no_transcript", "source"].includes(clip.copy_source)
-            ? "This clip has no usable transcript for an AI posting kit."
-            : "No AI posting kit was saved for this clip. Check the Ollama status before generating another clip.";
-        showDialog("AI posting kit", [element("p", "section-copy", reason)]);
-        return;
-    }
-    const model = clip.copy_model ? "Drafted by " + clip.copy_model : "Drafted by the local model";
-    contents.push(element("p", "section-copy", model));
-    addCopySection(contents, "Title", clip.title);
-    for (const [index, variant] of (clip.title_variants || []).entries()) addCopySection(contents, "Alternative title " + (index + 1), variant);
-    addCopySection(contents, "Suggested opening text", clip.ai_hook);
-    addCopySection(contents, "Description", clip.description);
-    addCopySection(contents, "Pinned comment", clip.pinned_comment);
-    const tags = (clip.tags || []).map((tag) => "#" + tag.replace(/^#+/, "").replace(/\s+/g, "")).join(" ");
-    addCopySection(contents, "Hashtags", tags);
-    addCopySection(contents, "Editing suggestion", clip.editing_tip);
-    addCopySection(contents, "Posting angle", clip.posting_tip);
-    addCopySection(contents, "Music brief", clip.music_brief);
-    addCopySection(contents, "Sound effect suggestion", clip.sound_effect_prompt);
-    addCopySection(contents, "Suggested library track", clip.music_track);
-    if (clip.applied_music) contents.push(element("p", "section-copy", "Audio replacement used: " + clip.applied_music));
-    if (clip.selection === "ai" && clip.reason) contents.push(element("p", "section-copy", "Why this highlight: " + clip.reason));
-    showDialog("AI posting kit", contents);
-}
-
 function clipCard(clip, folder) {
     const uri = "/clips/" + encodeURIComponent(folder) + "/" + encodeURIComponent(clip.filename);
     const card = element("article", "clip");
@@ -358,7 +326,7 @@ function clipCard(clip, folder) {
     const actions = element("div", "clip-actions");
     const download = link("MP4", uri, "download");
     download.download = clip.filename;
-    actions.append(action("AI posting kit", () => openPostCopy(clip), "copy"), download);
+    actions.append(action("AI posting kit", (event) => openPostingKit(clip, folder, event.currentTarget), "copy"), download);
     body.append(actions);
     card.append(video, body);
     return card;
@@ -368,7 +336,12 @@ function batchCard(batch) {
     const card = element("article", "batch");
     card.id = "batch-" + batch.task_id;
     const heading = element("div", "batch-heading");
-    heading.append(element("h3", null, batch.source_title));
+    const identity = element("div");
+    identity.append(element("h3", null, batch.source_title));
+    const meta = ["Task #" + batch.task_id];
+    if (Number.isFinite(batch.exported_at)) meta.push(exportDate.format(batch.exported_at * 1000));
+    identity.append(element("p", "batch-meta", meta.join(" · ")));
+    heading.append(identity);
     if (/^https?:\/\/(?:[^/]+\.)?(?:youtube\.com|youtu\.be)\//i.test(batch.youtube_url || "")) {
         const source = link("Source", batch.youtube_url, "link");
         source.target = "_blank";
@@ -402,29 +375,80 @@ function batchCard(batch) {
     return card;
 }
 
-async function loadTasks() {
+function clearLibrary(keepFocus = true) {
+    libraryFilters.reset();
+    libraryPage = 1;
+    if (keepFocus) byId("library-query").focus();
+}
+
+function targetBatch() {
+    if (!location.hash.startsWith("#batch-")) return "";
+    try { return decodeURIComponent(location.hash.slice(7)); } catch { return ""; }
+}
+
+let libraryFocus = targetBatch();
+
+async function loadTasks({moveFocus = false} = {}) {
+    clearTimeout(librarySearchTimer);
     const request = ++libraryRequest;
+    const focus = libraryFocus;
+    const params = new URLSearchParams({page: libraryPage});
+    const fields = new FormData(libraryFilters);
+    const query = fields.get("q").trim();
+    const filterCount = ["source", "selection", "after", "before"].filter(name => fields.get(name)).length;
+    byId("library-filter-label").textContent = filterCount ? "Filters (" + filterCount + ")" : "Filters";
+    byId("library-reset").hidden = !query && !filterCount && fields.get("sort") === "newest" && fields.get("size") === "3";
+    if (query) params.set("q", query);
+    for (const name of ["sort", "size", "source", "selection"]) {
+        if (fields.get(name)) params.set(name, fields.get(name));
+    }
+    if (fields.get("after")) params.set("after", new Date(fields.get("after")).getTime() / 1000);
+    if (fields.get("before")) params.set("before", new Date(fields.get("before")).getTime() / 1000 + 60);
+    if (focus) params.set("focus", focus);
+
     byId("refresh").disabled = true;
+    const results = byId("clip-batches");
+    results.setAttribute("aria-busy", "true");
     try {
-        const tasks = await api("/api/tasks");
+        const data = await api("/api/library?" + params);
         if (request !== libraryRequest) return;
-        const target = location.hash.startsWith("#batch-") ? location.hash.slice(1) : "";
-        const newTarget = target && !libraryBatchIds.has(target.slice("batch-".length));
-        libraryBatchIds = new Set(tasks.map((batch) => batch.task_id));
-        const count = tasks.reduce((total, batch) => total + batch.clips.length, 0);
-        byId("clip-count").textContent = count + (count === 1 ? " exported clip" : " exported clips");
-        byId("library-empty").hidden = count !== 0;
-        byId("clip-batches").replaceChildren(...tasks.map(batchCard));
-        if (newTarget) byId(target)?.scrollIntoView();
+        libraryFocus = "";
+        libraryPage = data.page;
+        libraryBatchIds = new Set(data.exported_ids);
+        const count = query || filterCount ? data.matched_clips : data.total_clips;
+        const label = query || filterCount ? " matching clip" : " exported clip";
+        byId("clip-count").textContent = count + label + (count === 1 ? "" : "s");
+        byId("library-empty").hidden = data.total_clips !== 0 || Boolean(query || filterCount);
+        byId("library-no-matches").hidden = count !== 0 || !query && !filterCount;
+        results.replaceChildren(...data.batches.map(batchCard));
+        byId("library-pagination").hidden = data.pages <= 1;
+        byId("library-prev").disabled = data.page <= 1;
+        byId("library-next").disabled = data.page >= data.pages;
+        byId("library-page-label").textContent = "Page " + data.page + " of " + data.pages + " · " + data.total_batches + " batches";
+        if (focus) byId("batch-" + focus)?.scrollIntoView({block: "start"});
+        if (moveFocus && (byId("library-prev").disabled || byId("library-next").disabled)) {
+            byId("library-page-label").focus({preventScroll: true});
+        }
         renderLatestQueue();
         message("library-message");
     } catch (error) {
         if (request !== libraryRequest) return;
-        byId("clip-count").textContent = "Library unavailable";
         message("library-message", error.message);
     } finally {
-        if (request === libraryRequest) byId("refresh").disabled = false;
+        if (request === libraryRequest) {
+            byId("refresh").disabled = false;
+            results.removeAttribute("aria-busy");
+        }
     }
+}
+
+function updateLibrarySearch(debounce = false) {
+    libraryPage = 1;
+    libraryFocus = "";
+    libraryRequest += 1;
+    clearTimeout(librarySearchTimer);
+    if (debounce) librarySearchTimer = setTimeout(loadTasks, 250);
+    else loadTasks();
 }
 
 async function loadTracks(selected) {
@@ -542,7 +566,26 @@ byId("cache-button").addEventListener("click", openCache);
 byId("source-url").addEventListener("click", () => { setSource("url"); syncQueueSubmit(); });
 byId("source-upload").addEventListener("click", () => { setSource("upload"); syncQueueSubmit(); });
 byId("selection").addEventListener("change", showRangeOptions);
-byId("refresh").addEventListener("click", loadTasks);
+byId("refresh").addEventListener("click", () => loadTasks());
+byId("library-query").addEventListener("input", () => updateLibrarySearch(true));
+libraryFilters.addEventListener("submit", (event) => { event.preventDefault(); updateLibrarySearch(); });
+libraryFilters.addEventListener("change", (event) => {
+    if (event.target.name !== "q") updateLibrarySearch();
+});
+for (const id of ["library-reset", "library-clear-no-matches"]) {
+    byId(id).addEventListener("click", () => { clearLibrary(); updateLibrarySearch(); });
+}
+for (const [id, direction] of [["library-prev", -1], ["library-next", 1]]) {
+    byId(id).addEventListener("click", () => { libraryPage += direction; loadTasks({moveFocus: true}); });
+}
+function followLibraryHash() {
+    libraryFocus = targetBatch();
+    if (!libraryFocus || route === "settings") return;
+    clearLibrary(false);
+    loadTasks();
+}
+
+window.addEventListener("hashchange", followLibraryHash);
 byId("start-link").addEventListener("click", (event) => {
     if (route !== "studio") return;
     event.preventDefault();

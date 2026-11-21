@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import re
 import shutil
@@ -13,15 +14,17 @@ from urllib.parse import parse_qs, urlparse
 import av
 import requests
 import uvicorn
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
 
 from config.settings import load_settings, save_settings
 from config.studio import Layout, StudioSettings, studio_settings
+from core.analyzer import generate_post_copy
 from core.downloader import DOWNLOADS_DIR, clear_all_downloads_detailed, get_downloads_storage_info, sanitize_filename
 from core.job_queue import DuplicateJob, JobQueue
+from core.publisher import posting_metadata, read_caption_context, write_clip_metadata
 from core.studio_pipeline import run_job
 from core.transformer import AUDIO_EXTENSIONS, MUSIC_DIR, OUTPUT_DIR, asset_files
 
@@ -31,6 +34,7 @@ UPLOADS_DIR = BASE_DIR / "uploads"
 UPLOAD_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
 JOB_QUEUE = JobQueue(BASE_DIR / "data" / "jobs.sqlite3")
 SETTINGS_LOCK = threading.Lock()
+POSTING_KIT_LOCK = threading.Lock()
 
 
 @asynccontextmanager
@@ -86,6 +90,10 @@ class ClipRequest(BaseModel):
         if self.selection == "range" and not 1 <= self.end_time - self.start_time <= 600:
             raise ValueError("Choose a time range between 1 second and 10 minutes.")
         return self
+
+
+class PostingKitRequest(BaseModel):
+    notes: str = Field(default="", max_length=800)
 
 
 @contextmanager
@@ -278,31 +286,161 @@ def upload_video_endpoint(file: UploadFile = File(...)):
     return {"status": "ok", "file_path": str(dest), "filename": dest.name, "size_mb": round(size / 2**20, 2)}
 
 
-@app.get("/api/tasks")
-def list_tasks():
+def export_batches():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     running = JOB_QUEUE.running_id()
-    entries = sorted(OUTPUT_DIR.iterdir(), key=lambda file: file.stat().st_mtime, reverse=True)
-    batches = []
-    for entry in entries:
+    for entry in OUTPUT_DIR.iterdir():
         if running and entry.name.endswith(f"_[{running}]"):
             continue
-        videos = sorted(entry.glob("*.mp4")) if entry.is_dir() else []
-        clips = [
-            {"title": video.stem} | read_json(video.with_suffix(".json")) | {"filename": video.name}
-            for video in videos if not video.name.startswith(("source-", "slice_"))
-        ]
-        if not clips:
+        videos = sorted(file for file in entry.glob("*.mp4") if not file.name.startswith(("source-", "slice_")))
+        try:
+            exported_at = max((video.stat().st_mtime for video in videos), default=None)
+        except FileNotFoundError:
             continue
+        if exported_at is None:
+            continue
+
         info = read_json(entry / "info.json")
-        batches.append({
+        yield {
             "task_id": batch_task_id(entry, info),
             "youtube_url": info.get("youtube_url", ""),
             "source_title": info.get("source_title", entry.name),
             "folder_name": entry.name,
-            "clips": clips,
-        })
-    return batches
+            "exported_at": exported_at,
+        }, videos
+
+
+def exported_clip(video):
+    return {"title": video.stem} | read_json(video.with_suffix(".json")) | {"filename": video.name}
+
+
+def public_clip(clip):
+    clip.pop("posting_context", None)
+    return clip
+
+
+@app.get("/api/tasks")
+def list_tasks():
+    return [
+        batch | {"clips": [public_clip(exported_clip(video)) for video in videos]}
+        for batch, videos in sorted(export_batches(), key=lambda row: row[0]["exported_at"], reverse=True)
+    ]
+
+
+@app.get("/api/library")
+def search_library(
+    q: str = Query(default="", max_length=200),
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=3, ge=1, le=12),
+    sort: Literal["newest", "oldest", "title"] = "newest",
+    source: Literal["", "youtube", "upload"] = "",
+    selection: Literal["", "ai", "timeline", "manual"] = "",
+    after: int | None = None,
+    before: int | None = None,
+    focus: str = Query(default="", max_length=260),
+):
+    if after is not None and before is not None and after >= before:
+        raise HTTPException(422, "Choose an end time at or after the start time.")
+
+    words = [word.lstrip("#") for word in q.casefold().split() if word.lstrip("#")]
+    matches = []
+    exported_ids = []
+    total_clips = matched_clips = 0
+    for batch, videos in export_batches():
+        exported_ids.append(batch["task_id"])
+        total_clips += len(videos)
+        exported = batch["exported_at"]
+        if (after is not None and exported < after) or (before is not None and exported >= before):
+            continue
+        batch_source = "youtube" if batch["youtube_url"] else "upload"
+        if source and source != batch_source:
+            continue
+
+        batch_text = " ".join(str(batch[field]) for field in ("task_id", "source_title", "youtube_url", "folder_name")).casefold()
+        remaining = [word for word in words if word not in batch_text]
+        visible = []
+        for video in videos:
+            if not remaining and not selection:
+                visible.append(video)
+                continue
+            clip = exported_clip(video)
+            if selection and clip.get("selection") != selection:
+                continue
+            values = (clip.get(field, "") for field in (
+                "filename", "title", "title_variants", "description", "hook", "ai_hook", "reason",
+                "tags", "pinned_comment", "posting_notes", "posting_context",
+            ))
+            clip_text = " ".join(str(value) for value in values).casefold()
+            if not all(word in clip_text for word in remaining):
+                if clip.get("posting_context"):
+                    continue
+                captions = read_caption_context(video.with_suffix(".ass")).casefold()
+                if not all(word in clip_text or word in captions for word in remaining):
+                    continue
+            visible.append(clip)
+        if visible:
+            matches.append((batch, visible))
+            matched_clips += len(visible)
+
+    matches.sort(key=lambda row: (-row[0]["exported_at"], row[0]["folder_name"]))
+    if sort == "title":
+        matches.sort(key=lambda row: row[0]["source_title"].casefold())
+    elif sort == "oldest":
+        matches.sort(key=lambda row: row[0]["exported_at"])
+
+    pages = max(1, math.ceil(len(matches) / size))
+    target = next((index for index, (batch, _) in enumerate(matches) if batch["task_id"] == focus), None) if focus else None
+    page = min(page, pages) if target is None else target // size + 1
+    start = (page - 1) * size
+    return {
+        "batches": [
+            batch | {"clips": [public_clip(exported_clip(clip) if isinstance(clip, Path) else clip) for clip in clips]}
+            for batch, clips in matches[start:start + size]
+        ],
+        "page": page,
+        "pages": pages,
+        "total_batches": len(matches),
+        "total_clips": total_clips,
+        "matched_clips": matched_clips,
+        "exported_ids": exported_ids,
+    }
+
+
+@app.post("/api/posting-kit/{folder_name}/{filename}")
+def refresh_posting_kit(folder_name: str, filename: str, request: PostingKitRequest):
+    folder = task_folder(folder_name)
+    video = (folder / filename).resolve()
+    if (video.parent != folder or video.suffix.lower() != ".mp4"
+            or video.name.startswith(("source-", "slice_")) or not video.is_file()):
+        raise HTTPException(404, "Exported clip not found.")
+    if not POSTING_KIT_LOCK.acquire(blocking=False):
+        raise HTTPException(409, "A posting kit is already generating. Try again when it finishes.")
+
+    try:
+        output = video.with_suffix(".json")
+        metadata = read_json(output)
+        info = read_json(folder / "info.json")
+        label = info.get("source_title") or video.stem
+        context = metadata.get("posting_context") or read_caption_context(video.with_suffix(".ass"))
+        copy = generate_post_copy(
+            {}, [], label, load_settings(), tuple(list_music()), excerpt=context, notes=request.notes,
+        )
+        if copy["copy_source"] == "no_transcript":
+            raise HTTPException(422, "Add a note describing what actually happens in this clip, then try again.")
+        if copy["copy_source"] != "ai":
+            raise HTTPException(503, "The local model did not return a posting kit. Check Ollama and try again.")
+        if metadata.get("copy_ready") and not copy["copy_ready"]:
+            raise HTTPException(502, "The new draft was incomplete. Your previous kit is still saved.")
+
+        updated = metadata | posting_metadata(copy, label, metadata.get("source_url") or info.get("youtube_url", ""))
+        with JOB_QUEUE.gate:
+            if not video.is_file():
+                raise HTTPException(404, "The clip was removed while the kit was generating.")
+            write_clip_metadata(output, updated)
+        updated.pop("posting_context", None)
+        return updated | {"filename": video.name}
+    finally:
+        POSTING_KIT_LOCK.release()
 
 
 def process_job(job_id, payload, preferences):

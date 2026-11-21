@@ -133,7 +133,7 @@ function queueCard(job, historyOpen) {
             view.dataset.queueControl = "view";
             view.addEventListener("click", () => {
                 tasksDrawer.close();
-                if (route === "library" && location.hash === view.hash) byId(view.hash.slice(1))?.scrollIntoView();
+                if (route === "library" && location.hash === view.hash) followLibraryHash();
             });
             actions.append(view);
         }

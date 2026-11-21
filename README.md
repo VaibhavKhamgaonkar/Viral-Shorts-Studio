@@ -30,7 +30,7 @@ Run `start_web.bat`, open **Settings → Clip defaults**, enter `qwen2.5:7b` in 
 | **Ollama offline** | Open Ollama from the Start menu, or run `ollama serve` in a separate terminal. Refresh the studio. |
 | **Model missing** | Run `ollama list` and match the full model tag in Settings, including `:7b` or `:3b`. Pull the model if it is missing. |
 
-The studio can still trim and export with Ollama offline. Automatic selection falls back to timeline picks. AI posting kits require usable speech or captions and a response from the configured model. Whisper handles sources without usable captions and may download its speech model on first use.
+The studio can still trim and export with Ollama offline. Automatic selection falls back to timeline picks. AI posting kits need usable speech, captions, or creator notes and a response from the configured model. Whisper handles sources without usable captions and may download its speech model on first use.
 
 ### Start from PowerShell
 
@@ -49,7 +49,11 @@ python -m venv venv
 3. Choose blurred background, center crop, or a gameplay split screen. Put a video loop you can use in `assets/gameplay/` for split screen. The renderer uses a blurred background when that folder has no supported clips.
 4. Use **Advanced clip options** to set the clip count, choose 1080 × 1920 or 720 × 1280, adjust speed, override source audio, or toggle captions and mirroring. You can choose a warm or black-and-white look, fade the picture and sound at both ends, and write your own opening text. These choices apply to the current job and are rendered into the exported MP4.
 5. Click **Queue clips**. The form confirms the task ID, and you can submit more jobs right away. Open **Tasks** in the sidebar or click **View task** to see queue positions, current progress, remaining stages, and recent results. Percentages appear when a step reports measurable progress.
-6. A notification appears in the bottom-right when a job finishes. Choose **View clips** to open the batch in **Clip library**, or **View details** if a job stops. Each batch stores vertical MP4s, ASS subtitle files, and JSON metadata under `output_clips/`. The **AI posting kit** contains model-generated titles, hooks, descriptions, hashtags, editing and posting suggestions, and optional sound cues when the model provides them.
+6. A notification appears in the bottom-right when a job finishes. Choose **View clips** to open the batch in **Clip library**, or **View details** if a job stops. Each batch stores vertical MP4s, ASS subtitle files, and JSON metadata under `output_clips/`. In the **AI posting kit**, select a title, review the caption and its viewer question, and copy the post with its topical hashtags. The kit also includes a separate pinned comment and any audience, editing, and audio suggestions from the model.
+
+Use **Regenerate draft** to refresh an existing kit without re-rendering the MP4. Add a note about the clip's key visual moment when captions are sparse or the model missed something. Older exports can use their saved speech captions or your notes. Hashtags are local AI suggestions based on the clip. [YouTube hashtag guidance](https://support.google.com/youtube/answer/6390658?hl=en)
+
+Use the search above the exports on **Create clips** or **Clip library** to find a task ID, clip title, caption, hashtag, or saved spoken phrase. **Filters** narrows results by source, clip selection method, or export date and time in your browser’s local time zone. Sort by export time or source title. Pages hold 3 batches by default, with 6 and 12 available in Filters. When a keyword matches individual clips, the results show those clips under their batch.
 
 For YouTube videos with usable captions, the studio scans the transcript in overlapping windows and asks yt-dlp for selected ranges. If a range request fails it can use a full download. Highlights depend on spoken content and the available transcript. Use an exact range for a moment you already know.
 

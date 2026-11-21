@@ -61,6 +61,9 @@ function clearTaskFlash(jobId) {
 }
 
 tasksButton.addEventListener("click", () => openTasks());
+byId("queue-flash-link").addEventListener("click", (event) => {
+    if (route === "library" && location.hash === event.currentTarget.hash) followLibraryHash();
+});
 byId("queue-flash-details").addEventListener("click", () => {
     const jobId = flashJobs.length === 1 ? flashJobs[0].job_id : "";
     tasksButton.focus({preventScroll: true});

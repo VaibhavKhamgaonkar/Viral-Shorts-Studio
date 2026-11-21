@@ -44,7 +44,7 @@ class HighlightTests(unittest.TestCase):
     def test_post_copy_uses_only_selected_range_and_allowlisted_music(self):
         clip = {"start_time": 15, "end_time": 45}
         transcript = [{"start": 0, "end": 10, "text": "Outside of clip"},
-                      {"start": 20, "end": 25, "text": "Inside the clip"}]
+                      {"start": 20, "end": 25, "text": "Inside the clip, a rider tests the wrench on a loose bolt."}]
         settings = {"llm_base_url": "http://localhost:11434/v1", "llm_api_key": "ollama", "llm_model": "qwen2.5:7b"}
         response = [{"title": "Faithful title", "hook": "An opening line", "music_track": "../music.wav"}]
         with patch("core.analyzer.ask_model", return_value=response) as local:
@@ -56,7 +56,7 @@ class HighlightTests(unittest.TestCase):
 
     def test_posting_kit_only_uses_model_output(self):
         clip = {"start_time": 0, "end_time": 15}
-        transcript = [{"start": 1, "end": 10, "text": "A real line from the source."}]
+        transcript = [{"start": 1, "end": 10, "text": "The loose crank bolt was making the bicycle click while pedaling."}]
         settings = {"llm_base_url": "http://localhost:11434/v1", "llm_api_key": "ollama", "llm_model": "qwen2.5:7b"}
         with patch("core.analyzer.ask_model", return_value=[]):
             copy = generate_post_copy(clip, transcript, "Source", settings)
@@ -71,6 +71,36 @@ class HighlightTests(unittest.TestCase):
         self.assertEqual(copy["editing_tip"], "Open on the first example.")
         self.assertEqual(copy["hook"], "")
         self.assertEqual(copy["description"], "")
+
+
+    def test_sparse_context_requires_notes_and_draft_validates_tags_and_evidence(self):
+        settings = {"llm_base_url": "http://localhost:11434/v1", "llm_api_key": "ollama", "llm_model": "qwen2.5:7b"}
+        notes = "The rider tightens a loose crank bolt and the clicking stops."
+        response = [{
+            "title": "Where did the click go?",
+            "title_variants": ["Where did the click go!", "Diagnose a noisy crank", "One wrench fixed the wobble"],
+            "hook": "Listen to that click",
+            "caption_lead": "The bike clicks on every pedal stroke.",
+            "caption_body": "The rider tightens a loose crank bolt and spins the pedals again. Listen for the difference on the second pass.",
+            "caption_cta": "Which pass sounds better?",
+            "pinned_comment": "How do you diagnose a noisy crank?",
+            "tags": ["#viral", "#BikeRepair", "#bikerepair", "Cycling", "CrankBolt"],
+            "audience": "Cyclists maintaining their own bikes",
+            "posting_tip": "Open on the clicking sound",
+            "evidence": "tightens a loose crank bolt",
+        }]
+        with patch("core.analyzer.ask_model", return_value=response) as local:
+            missing = generate_post_copy({}, [], "Bike repair", settings, excerpt="Hear that?")
+            self.assertEqual(missing["copy_source"], "no_transcript")
+            local.assert_not_called()
+            copy = generate_post_copy({}, [], "Bike repair", settings, excerpt="Hear that?", notes=notes)
+            local.assert_called_once()
+            self.assertIn("schema", local.call_args.kwargs)
+        self.assertTrue(copy["copy_ready"])
+        self.assertEqual(copy["tags"], ["BikeRepair", "Cycling", "CrankBolt"])
+        self.assertEqual(copy["title_variants"], ["Diagnose a noisy crank", "One wrench fixed the wobble"])
+        self.assertEqual(len(copy["description"].split("\n\n")), 3)
+        self.assertEqual(copy["evidence"], "tightens a loose crank bolt")
 
 
 if __name__ == "__main__":
