@@ -42,6 +42,12 @@ class ClipRequest(BaseModel):
     clip_length: Literal["short", "extended", "long"] | None = None
     mode: Layout | None = None
     model: str | None = Field(default=None, min_length=1, max_length=100)
+    clip_count: int | None = Field(default=None, ge=1, le=6)
+    output_resolution: Literal[720, 1080] = 1080
+    playback_speed: Literal[0.9, 1, 1.04, 1.15] | None = None
+    captions: bool | None = None
+    opening_hook: bool | None = None
+    audio_mode: Literal["original", "mute"] | None = None
     auto_delete_source: bool | None = None
     mirror: bool = False
     audio_speed: bool = False
@@ -302,6 +308,14 @@ def create_job(request: ClipRequest):
     effective = settings | preferences.model_dump()
     if request.model:
         effective["llm_model"] = request.model
+    for value, key in (
+        (request.clip_count, "max_clips_to_generate"),
+        (request.captions, "captions"),
+        (request.opening_hook, "opening_hook"),
+        (request.audio_mode, "music_mode"),
+    ):
+        if value is not None:
+            effective[key] = value
 
     require_idle()
     job_id = uuid.uuid4().hex[:8]

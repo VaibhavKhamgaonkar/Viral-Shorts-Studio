@@ -42,7 +42,7 @@ def text_field(value, limit):
 
 def transcript_windows(transcript, overlap_seconds, budget=14000):
     """Keep timestamps intact and carry some preceding speech into each window."""
-    lines = [f"[{s['start']}–{s['end']}] {text_field(s['text'], 1200)}" for s in transcript]
+    lines = [f"[{s['start']}s to {s['end']}s] {text_field(s['text'], 1200)}" for s in transcript]
     first = end = length = 0
     while end < len(lines):
         while end < len(lines) and length + len(lines[end]) + 1 <= budget:
@@ -111,10 +111,12 @@ def analyze_transcript_for_viral_clips(
         if min(total_duration, end) - start < clip_min:
             continue
         prompt = (
-            f"Find up to {max_clips} self-contained highlights with a strong opening and a payoff. "
-            f"Use absolute timestamps from this transcript window. Each range must be {clip_min} to {clip_max} seconds. "
-            "Return objects with start_time, end_time, title, reason, and score (0–100 for editorial strength). "
-            f"Return [] when there is no usable highlight.\n\n{text}"
+            f"Choose the strongest self-contained excerpt in this transcript, plus up to {max_clips - 1} others "
+            "if they are distinct and worth clipping. Prefer a clear opening and a concrete payoff. "
+            f"Use numeric seconds between {start} and {min(total_duration, end)}. "
+            f"Each excerpt must last {clip_min} to {clip_max} seconds. "
+            'Return a JSON array with "start_time", "end_time", "title", "reason", and "score" (0 to 100). '
+            f"Include at least one excerpt when the text contains meaningful speech.\n\nTranscript:\n{text}"
         )
         try:
             response = ask_model(prompt, llm_base_url, llm_api_key, llm_model)

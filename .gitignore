@@ -4,12 +4,18 @@ venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
 
 # Local workspace and generated files
 /bin/
 /downloads/
 /uploads/
 /output_clips/
+/output/
+/dist/
+/build/
 /assets/fonts/
 /assets/gameplay/
 /assets/music/
@@ -18,6 +24,31 @@ __pycache__/
 /.playwright-cli/
 /.agents/
 /.codex/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+*.part
+*.rendering
+*.upload
+
+# Media dropped outside the workspace folders
+*.mp4
+*.m4v
+*.mkv
+*.mov
+*.webm
+*.mp3
+*.m4a
+*.wav
+*.aac
+*.flac
+*.ogg
+*.safetensors
+*.gguf
+*.exe
 
 # Machine-specific settings and secrets
 /config/settings.json
@@ -28,3 +59,4 @@ credentials*.json
 token*.json
 *.pem
 *.key
+*.pfx

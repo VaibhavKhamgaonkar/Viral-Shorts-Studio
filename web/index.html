@@ -27,20 +27,26 @@
     <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
     <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 4H6a2 2 0 0 0-2 2v10"/></symbol>
     <symbol id="i-music" viewBox="0 0 24 24"><path d="M9 17V5l10-2v12M9 8l10-2"/><ellipse cx="6" cy="17" rx="3" ry="2.5"/><ellipse cx="16" cy="15" rx="3" ry="2.5"/></symbol>
+    <symbol id="i-panel" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M9 5v14m7-10-3 3 3 3"/></symbol>
 </svg>
 
 <a class="skip" href="#main">Skip to workspace</a>
 <aside class="sidebar">
-    <a class="brand" href="/" aria-label="Viral Shorts Studio home">
-        <span class="brand-mark"><svg class="icon"><use href="#i-cut"/></svg></span>
-        <span>Viral Shorts<br><small>STUDIO</small></span>
-    </a>
-    <nav aria-label="Workspace">
-        <a href="/" data-nav="studio"><svg class="icon"><use href="#i-cut"/></svg> Create clips</a>
-        <a href="/library" data-nav="library"><svg class="icon"><use href="#i-film"/></svg> Clip library</a>
-        <a href="/settings" data-nav="settings"><svg class="icon"><use href="#i-settings"/></svg> Settings</a>
+    <div class="rail-top">
+        <a class="brand" href="/" aria-label="Viral Shorts Studio home">
+            <span class="brand-mark"><svg class="icon"><use href="#i-cut"/></svg></span>
+            <span class="brand-label">Viral Shorts<br><small>STUDIO</small></span>
+        </a>
+        <button type="button" id="nav-toggle" class="nav-toggle" aria-controls="workspace-nav" aria-expanded="true" aria-label="Collapse navigation" title="Collapse navigation">
+            <svg class="icon" aria-hidden="true"><use href="#i-panel"/></svg>
+        </button>
+    </div>
+    <nav id="workspace-nav" aria-label="Workspace">
+        <a href="/" data-nav="studio" aria-label="Create clips" title="Create clips"><svg class="icon"><use href="#i-cut"/></svg><span class="nav-label">Create clips</span></a>
+        <a href="/library" data-nav="library" aria-label="Clip library" title="Clip library"><svg class="icon"><use href="#i-film"/></svg><span class="nav-label">Clip library</span></a>
+        <a href="/settings" data-nav="settings" aria-label="Settings" title="Settings"><svg class="icon"><use href="#i-settings"/></svg><span class="nav-label">Settings</span></a>
     </nav>
-    <a href="/settings#local-ai" class="engine">
+    <a href="/settings#local-ai" class="engine" aria-label="Local AI settings">
         <span class="engine-status"><span id="ai-dot" class="status-dot"></span><span id="ai-status">Checking local AI</span></span>
         <small id="ai-model">Ollama</small>
     </a>
@@ -85,7 +91,7 @@
                         <div class="field"><label for="clip-start">Start</label><input id="clip-start" placeholder="00:01:20"><small>hh:mm:ss or seconds</small></div>
                         <div class="field"><label for="clip-end">End</label><input id="clip-end" placeholder="00:02:00"><small>Up to 10 minutes per clip</small></div>
                     </div>
-                    <div class="field-grid">
+                    <div class="field-grid basic-options">
                         <div class="field" id="length-options">
                             <label for="clip-length">Clip length</label>
                             <select id="clip-length"><option value="short">20–60 sec</option><option value="extended">1–3 min</option><option value="long">3–10 min</option></select>
@@ -95,13 +101,22 @@
                             <select id="layout"><option value="smart_blur">Blurred background</option><option value="vertical_crop">Center crop</option><option value="split_screen">Gameplay split screen</option></select>
                         </div>
                     </div>
-                    <details class="job-options">
-                        <summary>More clip options</summary>
-                        <label class="check"><input id="mirror" type="checkbox"> Mirror horizontally</label>
-                        <label class="check"><input id="color-grade" type="checkbox"> Boost color and contrast</label>
-                        <label class="check"><input id="audio-speed" type="checkbox"> Play at 1.04× speed</label>
-                        <label class="check"><input id="auto-delete" type="checkbox"> Clear the local source copy after export</label>
-                    </details>
+                    <fieldset class="job-options">
+                        <legend>Advanced clip options</legend>
+                        <div class="field-grid advanced-fields">
+                            <div class="field" id="clip-count-field"><label for="job-count">Clips to generate</label><input type="number" min="1" max="6" id="job-count" value="3" required></div>
+                            <div class="field"><label for="resolution">Export resolution</label><select id="resolution"><option value="1080">1080 × 1920</option><option value="720">720 × 1280</option></select></div>
+                            <div class="field"><label for="playback-speed">Playback speed</label><select id="playback-speed"><option value="0.9">0.9×</option><option value="1" selected>1× (original)</option><option value="1.04">1.04×</option><option value="1.15">1.15×</option></select></div>
+                            <div class="field"><label for="job-audio">Audio</label><select id="job-audio"><option value="">Studio default</option><option value="original">Keep source audio</option><option value="mute">Mute source audio</option></select></div>
+                        </div>
+                        <div class="job-checks">
+                            <label class="check"><input id="job-captions" type="checkbox" checked> Burn in captions</label>
+                            <label class="check"><input id="job-opening-hook" type="checkbox" checked> Show opening text</label>
+                            <label class="check"><input id="mirror" type="checkbox"> Mirror horizontally</label>
+                            <label class="check"><input id="color-grade" type="checkbox"> Boost color and contrast</label>
+                            <label class="check"><input id="auto-delete" type="checkbox"> Clear local source copy after export</label>
+                        </div>
+                    </fieldset>
                     <button id="generate" class="button button-primary generate-button" type="submit"><svg class="icon"><use href="#i-spark"/></svg> Generate clips <svg class="icon end-icon"><use href="#i-arrow"/></svg></button>
                     <p id="form-message" class="form-message" role="alert" hidden></p>
                 </form>

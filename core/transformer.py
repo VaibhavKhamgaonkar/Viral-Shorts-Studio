@@ -78,6 +78,7 @@ def render_viral_clip(
     audio_mode="legacy_mix",
     music_path=None,
     source_audio_path=None,
+    output_width=1080,
 ):
     input_video = Path(input_video).resolve()
     target = Path(output_folder or OUTPUT_DIR).resolve()
@@ -105,7 +106,7 @@ def render_viral_clip(
 
     music_input = None
     if music_path and audio_mode in {"replace", "legacy_mix"}:
-        command += ["-stream_loop", "-1", "-t", str(duration), "-i", str(Path(music_path).resolve())]
+        command += ["-stream_loop", "-1", "-t", str(duration / audio_tempo), "-i", str(Path(music_path).resolve())]
         music_input = next_input
         next_input += 1
 
@@ -136,6 +137,8 @@ def render_viral_clip(
             escaped = subtitles.as_posix().replace(":", r"\:")
         escaped = escaped.replace("'", r"'\''")
         video_filters.append(f"subtitles=filename='{escaped}'")
+    if output_width != 1080:
+        video_filters.append(f"scale={output_width}:{output_width * 16 // 9}")
     if audio_tempo != 1:
         video_filters.append(f"setpts=PTS/{audio_tempo}")
     filters.append("[layout]" + ",".join(video_filters) + "[video]")

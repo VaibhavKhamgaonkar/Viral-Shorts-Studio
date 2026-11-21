@@ -136,14 +136,15 @@ def run_job(job_id, request, settings, update):
                 caption_color=settings["caption_color"], brand_name=settings["brand_name"],
                 opening_hook=copy["hook"] if settings["opening_hook"] else "",
             )
-            update("Rendering clip", f"Exporting clip {index} of {len(clips)} as a 1080 × 1920 MP4.")
+            width = request.output_resolution
+            update("Rendering clip", f"Exporting clip {index} of {len(clips)} as a {width} × {width * 16 // 9} MP4.")
             output = render_viral_clip(
                 input_path, offset, offset + end - start, f"{stem}.mp4", output_folder=task_dir,
                 subtitles_ass_path=ass_path, mode=request.mode, enable_hflip=request.mirror,
-                audio_tempo=settings["audio_tempo"] if request.audio_speed else 1,
+                audio_tempo=request.playback_speed or (settings["audio_tempo"] if request.audio_speed else 1),
                 color_contrast=settings["color_contrast"] if request.color_grade else 1,
                 color_saturation=settings["color_saturation"] if request.color_grade else 1,
-                audio_mode=audio_mode, music_path=track, source_audio_path=input_audio,
+                audio_mode=audio_mode, music_path=track, source_audio_path=input_audio, output_width=width,
             )
             generate_clip_metadata(clip | copy | {"applied_music": track.name if track else ""}, source_title, output, source_url)
         finally:

@@ -115,6 +115,7 @@ async function loadAI() {
         byId("ai-status").textContent = states[ai.status];
         byId("ai-model").textContent = ai.model;
         byId("ai-dot").classList.toggle("ready", ai.status === "ready");
+        document.querySelector(".engine").title = states[ai.status] + " · " + ai.model;
     } catch {
         byId("ai-status").textContent = "AI status unavailable";
     }
@@ -170,6 +171,17 @@ function showRangeOptions() {
     byId("length-options").hidden = exact;
     byId("clip-start").required = exact;
     byId("clip-end").required = exact;
+    byId("clip-count-field").hidden = exact;
+    byId("job-count").disabled = exact;
+}
+
+function setNavCollapsed(collapsed) {
+    document.documentElement.dataset.navCollapsed = String(collapsed);
+    const toggle = byId("nav-toggle");
+    const label = collapsed ? "Expand navigation" : "Collapse navigation";
+    toggle.setAttribute("aria-expanded", String(!collapsed));
+    toggle.setAttribute("aria-label", label);
+    toggle.title = label;
 }
 
 function parseTime(value) {
@@ -209,7 +221,11 @@ async function startJob(event) {
         auto_delete_source: byId("auto-delete").checked,
         mirror: byId("mirror").checked,
         color_grade: byId("color-grade").checked,
-        audio_speed: byId("audio-speed").checked,
+        output_resolution: Number(byId("resolution").value),
+        playback_speed: Number(byId("playback-speed").value),
+        captions: byId("job-captions").checked,
+        opening_hook: byId("job-opening-hook").checked,
+        audio_mode: byId("job-audio").value || null,
     };
     try {
         if (request.selection === "range") {
@@ -218,6 +234,8 @@ async function startJob(event) {
             if (request.end_time - request.start_time < 1 || request.end_time - request.start_time > 600) {
                 throw new Error("Choose a time range between 1 second and 10 minutes.");
             }
+        } else {
+            request.clip_count = byId("job-count").valueAsNumber;
         }
         if (sourceType === "upload") {
             const file = byId("video-file").files[0];
@@ -387,6 +405,9 @@ async function loadPreferences() {
         byId("clip-length").value = preferences.clip_length;
         byId("layout").value = preferences.default_mode;
         byId("auto-delete").checked = preferences.auto_delete_source;
+        byId("job-count").value = preferences.max_clips_to_generate;
+        byId("job-captions").checked = preferences.captions;
+        byId("job-opening-hook").checked = preferences.opening_hook;
     }
     if (route !== "settings") return;
     for (const field of settingsForm.elements) {
@@ -468,6 +489,12 @@ byId("create-panel").hidden = route !== "studio";
 byId("clip-workspace").classList.toggle("library-only", route === "library");
 if (route === "library") byId("library-title").textContent = "Exports";
 
+setNavCollapsed(localStorage.getItem("studio-nav-collapsed") === "true");
+byId("nav-toggle").addEventListener("click", () => {
+    const collapsed = byId("nav-toggle").getAttribute("aria-expanded") === "true";
+    setNavCollapsed(collapsed);
+    localStorage.setItem("studio-nav-collapsed", String(collapsed));
+});
 byId("cache-button").addEventListener("click", openCache);
 byId("source-url").addEventListener("click", () => setSource("url"));
 byId("source-upload").addEventListener("click", () => setSource("upload"));
