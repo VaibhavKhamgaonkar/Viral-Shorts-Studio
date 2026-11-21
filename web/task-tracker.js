@@ -8,6 +8,7 @@ const phases = [
     ["finalize", "Save clips"],
 ];
 let flashTimer;
+let flashJobs = [];
 const tracker = byId("task-tracker");
 const trackerToggle = tracker.querySelector("summary");
 const queueAnchor = route === "settings" ? "/library#task-queue" : "#task-queue";
@@ -79,6 +80,7 @@ function renderHeaderTracker(job, waiting) {
 }
 
 function showQueueFlash(jobs) {
+    flashJobs = jobs;
     const flash = byId("queue-flash");
     const result = jobs.length === 1 ? jobs[0] : null;
     const failures = jobs.filter((job) => job.status === "failed").length;
@@ -100,6 +102,20 @@ function showQueueFlash(jobs) {
     flashTimer = setTimeout(() => {
         if (!flash.contains(document.activeElement)) flash.hidden = true;
     }, 7500);
+}
+
+function clearTaskFlash(jobId) {
+    const remaining = flashJobs.filter((job) => job.job_id !== jobId);
+    const flash = byId("queue-flash");
+    if (remaining.length === flashJobs.length || flash.hidden) return;
+    if (remaining.length) {
+        showQueueFlash(remaining);
+    } else {
+        clearTimeout(flashTimer);
+        flash.hidden = true;
+        flashJobs = [];
+        byId("queue-announcement").textContent = "";
+    }
 }
 
 byId("tracker-queue-link").href = queueAnchor;

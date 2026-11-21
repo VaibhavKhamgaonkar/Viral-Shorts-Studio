@@ -110,6 +110,10 @@ def read_json(path):
         return {}
 
 
+def batch_task_id(folder, info):
+    return info.get("task_id") or folder.name.rsplit("_[", 1)[-1].rstrip("]")
+
+
 @app.get("/", include_in_schema=False)
 @app.get("/settings", include_in_schema=False)
 @app.get("/library", include_in_schema=False)
@@ -208,7 +212,10 @@ def clear_downloads_endpoint():
 @app.post("/api/delete_task/{folder_name}")
 def delete_task_endpoint(folder_name: str):
     with idle_workspace():
-        shutil.rmtree(task_folder(folder_name))
+        folder = task_folder(folder_name)
+        task_id = batch_task_id(folder, read_json(folder / "info.json"))
+        shutil.rmtree(folder)
+        JOB_QUEUE.remove_finished(task_id)
         return {"status": "ok"}
 
 
@@ -288,7 +295,7 @@ def list_tasks():
             continue
         info = read_json(entry / "info.json")
         batches.append({
-            "task_id": info.get("task_id", entry.name.rsplit("_[", 1)[-1].rstrip("]")),
+            "task_id": batch_task_id(entry, info),
             "youtube_url": info.get("youtube_url", ""),
             "source_title": info.get("source_title", entry.name),
             "folder_name": entry.name,
@@ -369,6 +376,13 @@ def get_job(job_id: str):
     if job is None:
         raise HTTPException(404, "Job not found.")
     return job
+
+
+@app.delete("/api/job/{job_id}")
+def dismiss_job(job_id: str):
+    if not JOB_QUEUE.remove_finished(job_id) and JOB_QUEUE.get(job_id):
+        raise HTTPException(409, "Only finished tasks can be dismissed.")
+    return {"status": "ok"}
 
 
 if __name__ == "__main__":

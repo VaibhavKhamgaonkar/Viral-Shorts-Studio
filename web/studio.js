@@ -345,11 +345,11 @@ function batchCard(batch) {
                 await loadStorage();
             })),
         action("Delete batch", () => askToDelete("Delete this clip batch?",
-            "The exported clips, captions, and posting copy for this batch will be removed.",
+            "This removes the exported clips, captions, posting copy, and task history for this batch.",
             async () => {
                 await api("/api/delete_task/" + folder, {method: "POST"});
                 toast("Batch deleted.");
-                await loadTasks();
+                await Promise.all([loadTasks(), refreshQueueAfterRemoval(batch.task_id)]);
             }))
     );
     card.append(heading, grid, buttons);

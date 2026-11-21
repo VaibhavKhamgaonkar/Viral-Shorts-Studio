@@ -181,6 +181,13 @@ class JobQueue:
             row = db.execute(f"SELECT {PUBLIC_FIELDS} FROM jobs WHERE job_id=?", (job_id,)).fetchone()
         return self._public(row) if row else None
 
+    def remove_finished(self, job_id):
+        """Remove history for a finished job. Active jobs stay in the queue."""
+        with self._db() as db:
+            return db.execute(
+                "DELETE FROM jobs WHERE job_id=? AND status IN ('completed','failed')", (job_id,)
+            ).rowcount > 0
+
     def has_work(self):
         with self._db() as db:
             return bool(db.execute("SELECT 1 FROM jobs WHERE status IN ('queued','running') LIMIT 1").fetchone())

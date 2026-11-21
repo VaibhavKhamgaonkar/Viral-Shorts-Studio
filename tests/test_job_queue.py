@@ -44,6 +44,8 @@ class JobQueueTests(unittest.TestCase):
                 self.assertEqual([job["job_id"] for job in active], [first, second, third])
                 self.assertEqual([job["position"] for job in active], [None, 1, 2])
                 self.assertTrue(queue.has_work())
+                self.assertFalse(queue.remove_finished(first))
+                self.assertFalse(queue.remove_finished(second))
 
                 # A second app instance must not interrupt the in-flight job.
                 with self.assertRaisesRegex(RuntimeError, "Another studio instance"):
@@ -57,6 +59,11 @@ class JobQueueTests(unittest.TestCase):
                 self.wait_for_status(queue, third, "completed")
                 self.assertEqual(processed, [first, second, third])
                 self.assertEqual(queue.get(first)["activity"][0]["stage"], "Rendering clip")
+                self.assertTrue(queue.remove_finished(first))
+                self.assertTrue(queue.remove_finished(second))
+                self.assertFalse(queue.remove_finished(first))
+                self.assertIsNone(queue.get(first))
+                self.assertEqual([job["job_id"] for job in queue.snapshot()], [third])
             finally:
                 release.set()
                 queue.stop()

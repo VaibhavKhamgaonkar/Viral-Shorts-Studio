@@ -3,7 +3,7 @@
 const statusLabels = {queued: "Queued", running: "In progress", completed: "Ready", failed: "Failed"};
 const knownJobs = new Map(JSON.parse(sessionStorage.getItem("studio-queue-status") || "[]"));
 let queueSnapshot = [];
-let queueRequestInFlight = false;
+let queueRequest;
 let lastSnapshot = "";
 let queueLoaded = false;
 
@@ -52,9 +52,22 @@ function queueCard(job, openActivities) {
         activity.append(element("summary", null, "Stage history"), events);
         card.append(activity);
     }
-    if (job.status === "completed" && libraryBatchIds.has(job.job_id)) {
+    if (job.status === "completed" || job.status === "failed") {
         const actions = element("div", "queue-view");
-        actions.append(link("View clips", "#batch-" + job.job_id, "arrow"));
+        if (libraryBatchIds.has(job.job_id)) {
+            actions.append(link("View clips", "#batch-" + job.job_id, "arrow"));
+        }
+        const dismiss = action("Dismiss from queue", async () => {
+            dismiss.disabled = true;
+            try {
+                await api("/api/job/" + encodeURIComponent(job.job_id), {method: "DELETE"});
+                await refreshQueueAfterRemoval(job.job_id);
+            } catch (error) {
+                toast(error.message);
+                dismiss.disabled = false;
+            }
+        });
+        actions.append(dismiss);
         card.append(actions);
     }
     return card;
@@ -97,9 +110,20 @@ function trackSubmittedJob(id) {
     refreshQueue();
 }
 
-async function refreshQueue() {
-    if (queueRequestInFlight) return;
-    queueRequestInFlight = true;
+function refreshQueue() {
+    if (!queueRequest) {
+        queueRequest = loadQueue().finally(() => { queueRequest = undefined; });
+    }
+    return queueRequest;
+}
+
+async function refreshQueueAfterRemoval(jobId) {
+    await queueRequest;
+    clearTaskFlash(jobId);
+    await refreshQueue();
+}
+
+async function loadQueue() {
     try {
         const jobs = await api("/api/jobs");
         const finished = jobs.filter((job) => {
@@ -133,8 +157,6 @@ async function refreshQueue() {
         byId("tracker-detail").replaceChildren(element("p", null, unavailable));
         lastSnapshot = "";
         message("queue-error", unavailable);
-    } finally {
-        queueRequestInFlight = false;
     }
 }
 

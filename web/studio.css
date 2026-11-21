@@ -208,7 +208,7 @@ input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: var
 .queue-activity, .queue-history { color: var(--muted); font-size: .81rem; margin-top: 8px; }
 .queue-activity ol { margin: 6px 0 0; padding-left: 20px; }
 .queue-activity li + li { margin-top: 3px; }
-.queue-view { margin-top: 7px; }
+.queue-view { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
 .queue-view .button { min-height: 30px; padding: 4px 7px; font-size: .76rem; }
 .batch { scroll-margin-top: 132px; }
 .batch:target { outline: 2px solid #829a48; outline-offset: 3px; }
