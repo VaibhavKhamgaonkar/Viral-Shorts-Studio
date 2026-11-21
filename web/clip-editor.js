@@ -40,12 +40,13 @@ function updateEditorTransport() {
     editorSeek.disabled = editorPlay.disabled = !valid;
     editorExport.disabled = !valid || Boolean(editSession?.saving);
     byId("editor-add-effect").disabled = !valid || !byId("editor-effect").value || (editSession?.cues.length || 0) >= 12;
+    updateEditorVisuals(start, length, valid);
 }
 
 function updateEditorPicture() {
     const zoom = Number(byId("editor-zoom").value) / 100;
     const look = byId("editor-look").value;
-    editorVideo.style.filter = {vivid: "saturate(1.25)", monochrome: "grayscale(1)", original: "none"}[look];
+    editorVideo.style.filter = editSession?.looks.get(look) || ({vivid: "saturate(1.25)", monochrome: "grayscale(1)"})[look] || "none";
     editorVideo.style.transform = "scale(" + zoom + ") scaleX(" + (byId("editor-mirror").checked ? -1 : 1) + ")";
     byId("editor-zoom-value").textContent = byId("editor-zoom").value + "%";
 }
@@ -213,8 +214,9 @@ function changeEditorTrack() {
 }
 
 async function openClipEditor(clip, path, uri) {
-    const session = editSession = {path, clip, cues: []};
+    const session = editSession = {path, clip, cues: [], titles: [], inserts: [], captions: [], looks: new Map(), insertAssets: new Map()};
     editorForm.reset();
+    resetEditorVisuals();
     byId("editor-track").replaceChildren(new Option("No music", ""));
     byId("editor-effect").replaceChildren(new Option("Loading sounds…", ""));
     byId("editor-hear-effect").disabled = true;
@@ -235,6 +237,7 @@ async function openClipEditor(clip, path, uri) {
         for (const track of assets.music) byId("editor-track").add(new Option(track, track));
         byId("editor-effect").replaceChildren(...assets.effects.map(effect => new Option(effect.label, effect.id)));
         byId("editor-hear-effect").disabled = assets.effects.length === 0;
+        loadEditorVisualAssets(assets);
         updateEditorTransport();
     } catch (error) {
         if (editSession === session) message("editor-status", error.message);
@@ -244,7 +247,7 @@ async function openClipEditor(clip, path, uri) {
 editorVideo.addEventListener("loadedmetadata", () => {
     if (!editorDialog.open) return;
     byId("editor-end").value = editorVideo.duration.toFixed(2);
-    editorVideo.parentElement.style.aspectRatio = editorVideo.videoWidth + "/" + editorVideo.videoHeight;
+    editorVideo.closest(".editor-frame").style.aspectRatio = editorVideo.videoWidth + "/" + editorVideo.videoHeight;
     updateEditorTransport();
 });
 editorVideo.addEventListener("error", () => {
@@ -360,23 +363,36 @@ async function submitEditorExport(session, edit) {
     }
 }
 
-editorForm.addEventListener("submit", event => {
-    event.preventDefault();
+function editorPayload() {
     const session = editSession;
     const {start, end, valid} = editorRange();
-    if (!valid || session.saving) return;
+    if (!session || !valid || session.saving) return null;
     if (session.cues.some(cue => !Number.isFinite(cue.at) || cue.at < 0 || cue.at >= end - start)) {
         message("editor-status", "Move every sound effect inside the trim range.");
-        return;
+        return null;
+    }
+    const problem = validateEditorVisuals(session, end - start);
+    if (problem) {
+        message("editor-status", problem);
+        return null;
     }
     const fields = new FormData(editorForm);
-    const edit = {
+    return {
         start, end, zoom: Number(fields.get("zoom")), mirror: fields.has("mirror"), look: fields.get("look"),
         source_level: Number(fields.get("source_level")), music_track: fields.get("music_track"),
         music_level: Number(fields.get("music_level")),
         save_mode: fields.get("save_mode"), source_revision: session.clip.file_revision || "",
         cues: session.cues.map(({effect, at, level}) => ({effect, at, level})),
+        frame: fields.get("frame"), titles: session.titles, inserts: session.inserts, captions: session.captions,
     };
+}
+
+editorForm.addEventListener("submit", event => {
+    event.preventDefault();
+    const session = editSession;
+    const edit = editorPayload();
+    if (!edit) return;
+    clearRenderedPreview();
     editorVideo.pause();
     if (edit.save_mode === "replace") {
         const cancel = action("Cancel", () => dialog.close());
@@ -396,6 +412,8 @@ editorForm.addEventListener("submit", event => {
 
 editorDialog.addEventListener("close", () => {
     if (editorDialog.open) return;
+    clearRenderedPreview();
+    releaseReactionPreview();
     editSession = undefined;
     cancelAnimationFrame(previewFrame);
     stopEditorMix();

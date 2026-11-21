@@ -2,6 +2,7 @@ import math
 import random
 import struct
 import wave
+from dataclasses import dataclass
 from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
@@ -11,6 +12,8 @@ from typing import Literal
 import av
 from pydantic import BaseModel, Field, model_validator
 
+from core.editor_visuals import frame_gif, reaction_gif, write_editor_titles
+from core.subtitles import generate_ass_subtitles
 from core.transformer import CPU_ENCODER, NVENC_ENCODER, get_ffmpeg_cmd, nvenc_available, run_encoder
 
 
@@ -33,12 +36,53 @@ class SoundCue(BaseModel):
     level: int = Field(default=45, ge=0, le=100)
 
 
+LOOKS = {
+    "original": ("Original", "", "none"),
+    "vivid": ("Vivid", "eq=saturation=1.25", "saturate(1.25)"),
+    "monochrome": ("Black and white", "hue=s=0", "grayscale(1)"),
+    "cinema": ("Cinema", "eq=contrast=1.14:saturation=.86", "contrast(1.14) saturate(.86)"),
+    "retro": ("Retro warm", "colorchannelmixer=.393:.769:.189:0:.349:.686:.168:0:.272:.534:.131", "sepia(1)"),
+    "cool": ("Cool night", "colorbalance=rs=-.05:bs=.09:rm=-.04:bm=.07:pl=1", "sepia(.12) hue-rotate(170deg) saturate(.9)"),
+}
+
+
+class TextCue(BaseModel):
+    text: str = Field(min_length=1, max_length=120, pattern=r"\S")
+    at: float = Field(ge=0, allow_inf_nan=False)
+    end: float = Field(gt=0, allow_inf_nan=False)
+    animation: Literal["pop", "slide", "fade"] = "pop"
+    position: Literal["top", "center", "lower"] = "top"
+    color: Literal["lime", "white", "pink"] = "lime"
+
+
+class InsertCue(BaseModel):
+    asset: str = Field(min_length=1, max_length=255)
+    at: float = Field(ge=0, allow_inf_nan=False)
+
+
+class SpeechCaption(BaseModel):
+    start: float = Field(ge=0, allow_inf_nan=False)
+    end: float = Field(gt=0, allow_inf_nan=False)
+    text: str = Field(min_length=1, max_length=1000)
+
+
+@dataclass(frozen=True)
+class InsertAsset:
+    duration: float
+    has_audio: bool = False
+    file: Path | None = None
+
+
 class ClipEdit(BaseModel):
     start: float = Field(ge=0, allow_inf_nan=False)
     end: float = Field(gt=0, allow_inf_nan=False)
     zoom: int = Field(default=100, ge=100, le=150)
     mirror: bool = False
-    look: Literal["original", "vivid", "monochrome"] = "original"
+    look: Literal["original", "vivid", "monochrome", "cinema", "retro", "cool"] = "original"
+    frame: Literal["", "neon", "sparkles", "sweep", "orbit"] = ""
+    titles: list[TextCue] = Field(default_factory=list, max_length=8)
+    inserts: list[InsertCue] = Field(default_factory=list, max_length=4)
+    captions: list[SpeechCaption] = Field(default_factory=list, max_length=1500)
     source_level: int = Field(default=100, ge=0, le=100)
     music_track: str = Field(default="", max_length=255)
     music_level: int = Field(default=20, ge=0, le=100)
@@ -48,11 +92,19 @@ class ClipEdit(BaseModel):
 
     @model_validator(mode="after")
     def validate_range(self):
-        if self.end - self.start < .24:
-            raise ValueError("Keep at least a quarter second between the trim points.")
-        if any(cue.at >= self.end - self.start for cue in self.cues):
-            raise ValueError("Every sound effect must start before the end of the edit.")
+        validate_timeline(self, self.end - self.start)
         return self
+
+
+def validate_timeline(edit, duration):
+    if duration < .24:
+        raise ValueError("Keep at least a quarter second between the trim points.")
+    if any(cue.at >= duration for cue in edit.cues):
+        raise ValueError("Every sound effect must start before the end of the edit.")
+    if any(title.end - title.at < .19 or title.end > duration + .01 for title in edit.titles):
+        raise ValueError("Each title needs at least 0.2 seconds inside the trim range.")
+    if any(cut.at >= duration for cut in edit.inserts):
+        raise ValueError("Insert each reaction before the end of the trimmed clip.")
 
 
 @lru_cache(maxsize=len(EFFECTS))
@@ -83,12 +135,18 @@ def effect_wave(name):
     return buffer.getvalue()
 
 
-def render_edit(video, output, edit, music, progress):
+def render_edit(video, output, edit, music, progress, *, inserts=None, preview=False):
     with av.open(str(video)) as container:
         stream = container.streams.video[0]
         width, height = stream.width, stream.height
         has_audio = bool(container.streams.audio)
     duration = edit.end - edit.start
+    insert_assets = inserts or {}
+    final_duration = duration + sum(insert_assets[cut.asset].duration for cut in edit.inserts)
+    out_width, out_height = width, height
+    if preview and max(width, height) > 480:
+        out_width = max(2, round(width * 240 / max(width, height)) * 2)
+        out_height = max(2, round(height * 240 / max(width, height)) * 2)
     command = [get_ffmpeg_cmd(), "-hide_banner", "-loglevel", "error", "-y",
                "-ss", str(edit.start), "-t", str(duration), "-i", str(video)]
     picture = []
@@ -98,18 +156,22 @@ def render_edit(video, output, edit, music, progress):
         picture.extend([f"crop={crop_width}:{crop_height}", f"scale={width}:{height}"])
     if edit.mirror:
         picture.append("hflip")
-    if edit.look == "vivid":
-        picture.append("eq=saturation=1.25")
-    elif edit.look == "monochrome":
-        picture.append("hue=s=0")
+    if look := LOOKS[edit.look][1]:
+        picture.append(look)
+    if (out_width, out_height) != (width, height):
+        picture.append(f"scale={out_width}:{out_height}")
     filters = []
-    if picture:
-        filters.append("[0:v]" + ",".join(picture) + "[picture]")
     audio = []
     next_input = 1
 
+    def add_input(path, *options):
+        nonlocal next_input
+        command.extend([*options, "-i", str(path)])
+        next_input += 1
+        return next_input - 1
+
     def add_audio(index, level, delay=0):
-        label = f"mix{len(audio)}"
+        label = f"mix{index}"
         chain = f"[{index}:a:0]aresample=48000,aformat=channel_layouts=stereo,volume={level / 100}"
         if delay:
             chain += f",adelay={delay}:all=1"
@@ -118,35 +180,124 @@ def render_edit(video, output, edit, music, progress):
 
     if has_audio and edit.source_level:
         add_audio(0, edit.source_level)
-    if music and edit.music_level:
-        command += ["-stream_loop", "-1", "-t", str(duration), "-i", str(music)]
-        add_audio(next_input, edit.music_level)
-        next_input += 1
-
+    music_index = add_input(music, "-stream_loop", "-1", "-t", str(final_duration)) if music and edit.music_level else None
     with TemporaryDirectory(dir=output.parent) as scratch:
+        scratch = Path(scratch)
         for cue in edit.cues:
             if not cue.level:
                 continue
-            path = Path(scratch) / f"{cue.effect}.wav"
+            path = scratch / f"{cue.effect}.wav"
             if not path.exists():
                 path.write_bytes(effect_wave(cue.effect))
-            command += ["-i", str(path)]
-            add_audio(next_input, cue.level, round(cue.at * 1000))
-            next_input += 1
+            add_audio(add_input(path), cue.level, round(cue.at * 1000))
+        graphics = []
+        if edit.titles:
+            write_editor_titles(scratch / "titles.ass", edit.titles, out_width, out_height)
+            graphics.append("ass=titles.ass")
+        if edit.captions:
+            generate_ass_subtitles([caption.model_dump() for caption in edit.captions],
+                                   edit.start, edit.end, scratch / "speech.ass", caption_style="clean")
+            graphics.append("ass=speech.ass")
+        video_label = "[0:v:0]"
+        if picture:
+            filters.append(video_label + ",".join(picture) + "[picture]")
+            video_label = "[picture]"
+        if edit.frame:
+            frame_path = scratch / "frame.gif"
+            frame_path.write_bytes(frame_gif(edit.frame))
+            frame_input = add_input(frame_path, "-stream_loop", "-1", "-ignore_loop", "1")
+            filters.append(f"[{frame_input}:v:0]scale={out_width}:{out_height}[border]")
+            if edit.frame == "orbit":
+                filters.append(f"{video_label}scale=trunc(iw*.42)*2:trunc(ih*.42)*2[inset]")
+                filters.append("[border][inset]overlay=(W-w)/2:(H-h)/2:shortest=1[framed]")
+            else:
+                filters.append(f"{video_label}[border]overlay=shortest=1[framed]")
+            video_label = "[framed]"
+        if graphics:
+            filters.append(video_label + ",".join(graphics) + "[graphics]")
+            video_label = "[graphics]"
+        if edit.inserts:
+            has_mix = bool(audio or music_index is not None or any(asset.has_audio for asset in insert_assets.values()))
+            video_label, expanded_audio = concat_inserts(filters, add_input, video_label, audio, has_mix,
+                                                         edit, insert_assets, scratch, out_width, out_height)
+            audio = [expanded_audio] if has_mix else []
+        if music_index is not None:
+            add_audio(music_index, edit.music_level)
         if audio:
-            filters.append("".join(audio) + f"amix=inputs={len(audio)}:duration=longest:normalize=0,"
-                           "alimiter=limit=0.95:level=0:latency=1,apad[audio]")
+            filters.append(mix_audio(audio) + "alimiter=limit=0.95:level=0:latency=1,apad[audio]")
         if filters:
             command += ["-filter_complex_threads", "2", "-filter_complex", ";".join(filters)]
-        command += ["-map", "[picture]" if picture else "0:v:0"]
+        command += ["-map", "0:v:0" if video_label == "[0:v:0]" else video_label]
         if audio:
             command += ["-map", "[audio]", "-c:a", "aac", "-b:a", "192k"]
-        command += ["-t", str(duration), "-pix_fmt", "yuv420p", "-movflags", "+faststart"]
+        command += ["-t", str(final_duration), "-pix_fmt", "yuv420p", "-movflags", "+faststart"]
         target = ["-f", "mp4", str(output)]
-        use_nvenc = nvenc_available(command[0])
-        exit_code, log = run_encoder(command + (NVENC_ENCODER if use_nvenc else CPU_ENCODER) + target,
-                                     output.parent, duration, progress)
+        use_nvenc = not preview and nvenc_available(command[0])
+        encoder = ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "27"] if preview else CPU_ENCODER
+        exit_code, log = run_encoder(command + (NVENC_ENCODER if use_nvenc else encoder) + target,
+                                     scratch, final_duration, progress)
         if exit_code and use_nvenc:
-            exit_code, log = run_encoder(command + CPU_ENCODER + target, output.parent, duration, progress)
+            exit_code, log = run_encoder(command + CPU_ENCODER + target, scratch, final_duration, progress)
         if exit_code:
             raise RuntimeError(f"FFmpeg could not export the edit. {log.strip()[-500:]}")
+
+
+def mix_audio(labels):
+    return "".join(labels) + f"amix=inputs={len(labels)}:duration=longest:normalize=0,"
+
+
+def concat_inserts(filters, add_input, video, audio, has_mix, edit, assets, scratch, width, height):
+    duration = edit.end - edit.start
+    timeline = []
+    cursor = 0
+    for cut in sorted(edit.inserts, key=lambda cue: cue.at):
+        if cut.at > cursor:
+            timeline.append((cursor, cut.at, None))
+        timeline.append((0, assets[cut.asset].duration, cut.asset))
+        cursor = cut.at
+    if duration > cursor:
+        timeline.append((cursor, duration, None))
+    source_parts = sum(asset is None for _, _, asset in timeline)
+    video_feeds = [f"[sourcev{number}]" for number in range(source_parts)]
+    audio_feeds = [f"[sourcea{number}]" for number in range(source_parts)]
+    normalization = "fps=30,setsar=1,format=yuv420p"
+    video_split = f",split={source_parts}" if source_parts > 1 else ""
+    filters.append(video + normalization + video_split + "".join(video_feeds))
+    silence = "anullsrc=r=48000:cl=stereo"
+    stereo = "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
+    if has_mix:
+        audio_split = f",asplit={source_parts}" if source_parts > 1 else ""
+        source_audio = mix_audio(audio) + "apad" if audio else silence
+        filters.append(f"{source_audio},atrim=duration={duration},{stereo}{audio_split}" + "".join(audio_feeds))
+    segments = []
+    for number, (start, end, name) in enumerate(timeline):
+        length = end - start
+        audio_source = None
+        if name is None:
+            video_source = video_feeds.pop(0)
+            if has_mix:
+                audio_source = audio_feeds.pop(0)
+        else:
+            asset = assets[name]
+            path = asset.file
+            if path is None:
+                path = scratch / f"{name}.gif"
+                if not path.exists():
+                    path.write_bytes(reaction_gif(name))
+            index = add_input(path)
+            video_source = f"[{index}:v:0]scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,"
+            video_source += f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,{normalization},"
+            audio_source = f"[{index}:a:0]{stereo},apad," if asset.has_audio else None
+        video_label = f"[segmentv{number}]"
+        # Input labels feed their first filter directly. The insert chain already ends in a separator.
+        filters.append(f"{video_source}trim=start={start}:end={end},setpts=PTS-STARTPTS{video_label}")
+        segments.append(video_label)
+        if has_mix:
+            audio_label = f"[segmenta{number}]"
+            chain = f"{audio_source}atrim=start={start}:duration={length}" if audio_source else f"{silence},atrim=duration={length}"
+            filters.append(f"{chain},asetpts=PTS-STARTPTS{audio_label}")
+            segments.append(audio_label)
+    video_out = "[joined_video]"
+    audio_out = "[joined_audio]" if has_mix else ""
+    filters.append("".join(segments) + f"concat=n={len(timeline)}:v=1:a={int(has_mix)}" + video_out + audio_out)
+    return video_out, audio_out

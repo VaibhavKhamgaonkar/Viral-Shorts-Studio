@@ -9,3 +9,4 @@ yt-dlp>=2024.3.10
 faster-whisper>=1.0.0
 openai>=1.14.0
 python-multipart>=0.0.9
+pillow>=10.1

@@ -10,6 +10,7 @@
     <script src="/studio/studio.js" defer></script>
     <script src="/studio/posting-kit.js" defer></script>
     <script src="/studio/clip-editor.js" defer></script>
+    <script src="/studio/editor-visuals.js" defer></script>
     <script src="/studio/task-notifications.js" defer></script>
     <script src="/studio/queue.js" defer></script>
 </head>
@@ -317,9 +318,18 @@
     </header>
     <div class="editor-workspace">
         <section class="editor-preview panel-plum" aria-labelledby="editor-preview-title">
-            <h3 id="editor-preview-title">Live preview</h3>
-            <div class="editor-frame"><video id="editor-video" playsinline preload="metadata" aria-label="Clip preview"></video></div>
-            <div class="editor-transport">
+            <div class="editor-preview-header">
+                <h3 id="editor-preview-title">Live preview</h3>
+                <button id="editor-render-preview" class="button button-outline" type="button" disabled>Preview full edit</button>
+            </div>
+            <div class="editor-frame">
+                <div class="editor-source-picture"><video id="editor-video" playsinline preload="metadata" aria-label="Clip preview"></video></div>
+                <img id="editor-frame-overlay" alt="" hidden>
+                <div id="editor-text-overlay" aria-hidden="true"></div>
+                <p id="editor-caption-preview" aria-hidden="true" hidden></p>
+                <video id="editor-full-preview" playsinline controls aria-label="Rendered edit preview" hidden></video>
+            </div>
+            <div class="editor-transport" id="editor-live-transport">
                 <button id="editor-play" class="button button-outline" type="button" disabled>Play</button>
                 <input id="editor-seek" type="range" value="0" min="0" max="1" step=".01" aria-label="Preview position" disabled>
                 <span id="editor-time">0:00 / 0:00</span>
@@ -333,9 +343,51 @@
                     <div class="field"><label for="editor-end">End (sec)</label><input id="editor-end" name="end" type="number" min=".24" step=".01" required></div>
                     <div class="field"><label for="editor-look">Color look</label><select id="editor-look" name="look"><option value="original">Original</option><option value="vivid">Vivid</option><option value="monochrome">Black and white</option></select></div>
                     <div class="field"><label for="editor-zoom">Center zoom <output for="editor-zoom" id="editor-zoom-value">100%</output></label><input id="editor-zoom" name="zoom" type="range" min="100" max="150" value="100"></div>
+                    <div class="field"><label for="editor-frame-choice">Frame or backdrop</label><select id="editor-frame-choice" name="frame"><option value="">None</option></select></div>
                 </div>
                 <label class="check"><input id="editor-mirror" name="mirror" type="checkbox"> Mirror horizontally</label>
             </section>
+            <details class="editor-group editor-disclosure">
+                <summary>Animated text</summary>
+                <div class="field"><label for="editor-title-text">Title text</label><textarea id="editor-title-text" rows="2" maxlength="120" placeholder="Enter your on-screen text"></textarea></div>
+                <div class="editor-title-options">
+                    <div class="field"><label for="editor-title-motion">Motion</label><select id="editor-title-motion"><option value="pop">Pop</option><option value="slide">Slide up</option><option value="fade">Fade</option></select></div>
+                    <div class="field"><label for="editor-title-position">Position</label><select id="editor-title-position"><option value="top">Top</option><option value="center">Center</option><option value="lower">Lower</option></select></div>
+                    <div class="field"><label for="editor-title-color">Color</label><select id="editor-title-color"><option value="lime">Lime</option><option value="white">White</option><option value="pink">Pink</option></select></div>
+                </div>
+                <button id="editor-add-title" class="button button-outline" type="button">Add title at playhead</button>
+                <div id="editor-title-cues" class="editor-visual-cues"></div>
+            </details>
+            <details class="editor-group editor-disclosure">
+                <summary>Reaction inserts</summary>
+                <div class="editor-reaction-picker">
+                    <div class="editor-reaction-thumb">
+                        <img id="editor-reaction-image" alt="" hidden>
+                        <video id="editor-reaction-video" playsinline muted loop controls preload="metadata" aria-label="Imported insert preview" hidden></video>
+                    </div>
+                    <div class="editor-reaction-options">
+                        <div class="field"><label for="editor-reaction">Reaction or animation</label><select id="editor-reaction"><option value="">Loading reactions…</option></select></div>
+                        <p id="editor-reaction-hint" class="editor-hint"></p>
+                        <div class="editor-reaction-actions">
+                            <button id="editor-add-reaction" class="button button-outline" type="button">Insert at playhead</button>
+                            <button id="editor-import-reaction" class="button button-outline" type="button">Import video</button>
+                            <input id="editor-reaction-file" type="file" accept=".mp4,.webm" hidden>
+                        </div>
+                    </div>
+                </div>
+                <p class="editor-hint">Insert times use the trimmed source. Use Preview full edit to play the combined result.</p>
+                <div id="editor-insert-cues" class="editor-visual-cues"></div>
+                <p id="editor-extended-time" class="editor-hint" hidden></p>
+            </details>
+            <details class="editor-group editor-disclosure">
+                <summary>Speech captions</summary>
+                <p class="editor-hint">Use Whisper on clips with audible speech that need captions.</p>
+                <div class="editor-reaction-actions editor-caption-actions">
+                    <button id="editor-generate-captions" class="button button-outline" type="button">Generate captions</button>
+                    <button id="editor-clear-captions" class="button button-plain" type="button" hidden>Clear generated captions</button>
+                </div>
+                <p id="editor-caption-status" class="editor-hint" role="status"></p>
+            </details>
             <section class="editor-group">
                 <h3>Audio mix</h3>
                 <div class="editor-fields">

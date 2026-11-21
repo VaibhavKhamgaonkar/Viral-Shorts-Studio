@@ -19,24 +19,30 @@ from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
+from starlette.background import BackgroundTask
 
 from config.settings import load_settings, save_settings
 from config.studio import Layout, StudioSettings, studio_settings
 from core.analyzer import generate_post_copy
-from core.clip_editor import ClipEdit, EFFECTS, effect_wave, render_edit
+from core.clip_editor import ClipEdit, EFFECTS, LOOKS, InsertAsset, effect_wave, render_edit, validate_timeline
 from core.downloader import DOWNLOADS_DIR, clear_all_downloads_detailed, get_downloads_storage_info, sanitize_filename
+from core.editor_visuals import FRAMES, REACTIONS, REACTION_DURATION, frame_gif, reaction_gif
 from core.job_queue import DuplicateJob, JobQueue
 from core.publisher import posting_metadata, read_caption_context, write_clip_metadata
-from core.studio_pipeline import run_job
+from core.studio_pipeline import run_job, transcribe_range
 from core.transformer import AUDIO_EXTENSIONS, MUSIC_DIR, OUTPUT_DIR, asset_files, inspect_media
 
 BASE_DIR = Path(__file__).resolve().parent
 WEB_DIR = BASE_DIR / "web"
 UPLOADS_DIR = BASE_DIR / "uploads"
+INSERTS_DIR = BASE_DIR / "assets" / "inserts"
+INSERT_EXTENSIONS = {".mp4", ".webm"}
 UPLOAD_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
 JOB_QUEUE = JobQueue(BASE_DIR / "data" / "jobs.sqlite3")
 SETTINGS_LOCK = threading.Lock()
 POSTING_KIT_LOCK = threading.Lock()
+EDITOR_PREVIEW_LOCK = threading.Lock()
+EDITOR_CAPTIONS_LOCK = threading.Lock()
 
 
 @asynccontextmanager
@@ -172,10 +178,88 @@ def editor_music_file(filename):
 
 @app.get("/api/editor-assets")
 def editor_assets():
+    inserts = [
+        {"id": name, "label": values[0], "hint": values[1], "duration": REACTION_DURATION, "still": True}
+        for name, values in REACTIONS.items()
+    ]
+    for file in asset_files(INSERTS_DIR, INSERT_EXTENSIONS):
+        name = "file:" + file.name
+        try:
+            asset = editor_insert_asset(name)
+        except HTTPException:
+            continue
+        inserts.append({"id": name, "label": file.stem, "hint": "Your library", "duration": asset.duration, "still": False})
     return {
         "music": list_music(),
         "effects": [{"id": name, "label": settings[0], "duration": settings[1]} for name, settings in EFFECTS.items()],
+        "looks": [{"id": name, "label": values[0], "css": values[2]} for name, values in LOOKS.items()],
+        "frames": [{"id": name, "label": label} for name, label in FRAMES.items()],
+        "inserts": inserts,
     }
+
+
+def editor_insert_asset(name):
+    if name in REACTIONS:
+        return InsertAsset(REACTION_DURATION)
+    filename = name.removeprefix("file:")
+    path = (INSERTS_DIR / filename).resolve()
+    if (filename == name or path.parent != INSERTS_DIR.resolve() or path.name != filename
+            or path.suffix.lower() not in INSERT_EXTENSIONS or not path.is_file()):
+        raise HTTPException(404, "That insert is not available in the editor library.")
+    try:
+        duration, has_audio = inspect_media(path)
+    except (av.error.FFmpegError, ValueError) as error:
+        raise HTTPException(422, "Could not read the insert video.") from error
+    if not .2 <= duration <= 15:
+        raise HTTPException(422, "Insert videos must be between 0.2 and 15 seconds.")
+    return InsertAsset(duration, has_audio, path)
+
+
+@app.get("/api/editor-inserts/{name}")
+def editor_insert(name: str):
+    asset = editor_insert_asset(name)
+    if asset.file:
+        return FileResponse(asset.file)
+    return Response(reaction_gif(name), media_type="image/gif", headers={"Cache-Control": "max-age=3600"})
+
+
+@app.get("/api/editor-frames/{name}")
+def editor_frame(name: str):
+    if name not in FRAMES:
+        raise HTTPException(404, "Animated frame not found.")
+    return Response(frame_gif(name), media_type="image/gif", headers={"Cache-Control": "max-age=3600"})
+
+
+@app.post("/api/editor-inserts")
+def import_editor_insert(file: UploadFile = File(...)):
+    name = Path(file.filename or "")
+    suffix = name.suffix.lower()
+    if suffix not in INSERT_EXTENSIONS:
+        raise HTTPException(415, "Choose an MP4 or WebM animation.")
+    if file.file.seek(0, os.SEEK_END) > 40 * 1024 * 1024:
+        raise HTTPException(413, "Choose an insert smaller than 40 MB.")
+    file.file.seek(0)
+    INSERTS_DIR.mkdir(parents=True, exist_ok=True)
+    stem = sanitize_filename(name.stem)
+    temporary = INSERTS_DIR / f"{uuid.uuid4().hex}.upload"
+    try:
+        with temporary.open("xb") as target:
+            shutil.copyfileobj(file.file, target)
+        try:
+            duration, _ = inspect_media(temporary)
+        except (av.error.FFmpegError, ValueError) as error:
+            raise HTTPException(422, "Could not read the insert video.") from error
+        if not .2 <= duration <= 15:
+            raise HTTPException(422, "Insert videos must be between 0.2 and 15 seconds.")
+        with SETTINGS_LOCK:
+            destination = INSERTS_DIR / (stem + suffix)
+            if destination.exists():
+                destination = INSERTS_DIR / f"{stem}-{uuid.uuid4().hex[:6]}{suffix}"
+            temporary.rename(destination)
+        return {"id": "file:" + destination.name, "label": destination.stem, "hint": "Your library",
+                "duration": duration, "still": False}
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 @app.get("/api/editor-effects/{name}")
@@ -525,13 +609,14 @@ def process_edit(payload, update):
     title = existing["title"]
     base_title = existing.get("version_title") or title
     base_name = existing.get("version_base") or video.stem
-    duration = edit.end - edit.start
+    inserts = {cue.asset: editor_insert_asset(cue.asset) for cue in edit.inserts}
+    duration = edit.end - edit.start + sum(inserts[cue.asset].duration for cue in edit.inserts)
     detail = f"{duration:.2f} seconds · {len(edit.cues)} sound effects"
     with TemporaryDirectory(dir=video.parent) as scratch:
         staging = Path(scratch)
         temporary = staging / "edit.rendering"
         update("export", "Rendering edit", detail)
-        render_edit(video, temporary, edit, music, lambda percent: update("export", "Rendering edit", detail, percent))
+        render_edit(video, temporary, edit, music, lambda percent: update("export", "Rendering edit", detail, percent), inserts=inserts)
         with JOB_QUEUE.gate:
             if str(video.stat().st_mtime_ns) != existing["file_revision"]:
                 raise ValueError("The clip changed during rendering. Reopen it and try again.")
@@ -549,6 +634,9 @@ def process_edit(payload, update):
             retained.pop("posting_context", None)
             if retained.get("copy_source") == "ai":
                 retained["copy_needs_review"] = True
+            transcript = " ".join(line.text for line in edit.captions if line.end > edit.start and line.start < edit.end)
+            if transcript:
+                retained["posting_context"] = transcript[:6500]
             write_clip_metadata(sidecar, retained | {
                 "title": title, "video_file": output.name, "selection": "edited", "start_time": 0,
                 "end_time": duration, "source_url": source_url,
@@ -633,25 +721,78 @@ def clip_job_identity(request, settings):
     return source, options, settings
 
 
+def inspect_clip_edit(folder_name, filename, edit):
+    video = exported_video(folder_name, filename)
+    revision = str(video.stat().st_mtime_ns)
+    if edit.source_revision and edit.source_revision != revision:
+        raise HTTPException(409, "This clip has changed. Refresh the library and open the editor again.")
+    edit.source_revision = revision
+    try:
+        duration, _ = inspect_media(video)
+    except (av.error.FFmpegError, ValueError) as error:
+        raise HTTPException(422, "Could not read the exported video.") from error
+    if edit.end > duration + .12:
+        raise HTTPException(422, "The trim range is outside the exported video.")
+    edit.end = min(edit.end, duration)
+    try:
+        validate_timeline(edit, edit.end - edit.start)
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+    music = editor_music_file(edit.music_track) if edit.music_track else None
+    inserts = {cue.asset: editor_insert_asset(cue.asset) for cue in edit.inserts}
+    return video, music, inserts
+
+
+@app.post("/api/edit/{folder_name}/{filename}/preview")
+def preview_clip_edit(folder_name: str, filename: str, edit: ClipEdit):
+    if not EDITOR_PREVIEW_LOCK.acquire(blocking=False):
+        raise HTTPException(409, "Another preview is rendering. Try again in a moment.")
+    scratch = None
+    try:
+        video, music, inserts = inspect_clip_edit(folder_name, filename, edit)
+        scratch = TemporaryDirectory(prefix="shorts-edit-preview-")
+        output = Path(scratch.name) / "preview.mp4"
+        render_edit(video, output, edit, music, None, inserts=inserts, preview=True)
+        return FileResponse(output, media_type="video/mp4", background=BackgroundTask(scratch.cleanup),
+                            headers={"Cache-Control": "no-store"})
+    except Exception:
+        if scratch:
+            scratch.cleanup()
+        raise
+    finally:
+        EDITOR_PREVIEW_LOCK.release()
+
+
+@app.post("/api/edit/{folder_name}/{filename}/captions")
+def generate_editor_captions(folder_name: str, filename: str, revision: str = ""):
+    video = exported_video(folder_name, filename)
+    source_revision = str(video.stat().st_mtime_ns)
+    if revision and revision != source_revision:
+        raise HTTPException(409, "This clip has changed. Refresh the library and open the editor again.")
+    try:
+        duration, has_audio = inspect_media(video)
+    except (av.error.FFmpegError, ValueError) as error:
+        raise HTTPException(422, "Could not read this video for captions.") from error
+    if not has_audio:
+        return {"captions": [], "message": "This clip has no audio track to transcribe."}
+    if not EDITOR_CAPTIONS_LOCK.acquire(blocking=False):
+        raise HTTPException(409, "Whisper is already generating captions. Try again in a moment.")
+    try:
+        with TemporaryDirectory(prefix="shorts-captions-") as scratch:
+            segments = transcribe_range(video, None, 0, 0, duration, Path(scratch) / "speech.wav", load_settings())
+        if not video.is_file() or str(video.stat().st_mtime_ns) != source_revision:
+            raise HTTPException(409, "The clip changed during transcription. Reopen it and try again.")
+        captions = [{"start": segment["start"], "end": min(duration, segment["end"]), "text": segment["text"][:1000]}
+                    for segment in segments[:1500] if segment["end"] > segment["start"] and segment["start"] < duration]
+        return {"captions": captions, "message": "" if captions else "Whisper did not return speech. Check the audio and local model."}
+    finally:
+        EDITOR_CAPTIONS_LOCK.release()
+
+
 @app.post("/api/edit/{folder_name}/{filename}")
 def queue_clip_edit(folder_name: str, filename: str, edit: ClipEdit):
     with JOB_QUEUE.gate:
-        video = exported_video(folder_name, filename)
-        revision = str(video.stat().st_mtime_ns)
-        if edit.source_revision and edit.source_revision != revision:
-            raise HTTPException(409, "This clip has changed. Refresh the library and open the editor again.")
-        edit.source_revision = revision
-        try:
-            duration, _ = inspect_media(video)
-        except (av.error.FFmpegError, ValueError) as error:
-            raise HTTPException(422, "Could not read the exported video.") from error
-        if edit.end > duration + .12 or duration - edit.start < .24:
-            raise HTTPException(422, "The trim range is outside the exported video.")
-        edit.end = min(edit.end, duration)
-        if any(cue.at >= edit.end - edit.start for cue in edit.cues):
-            raise HTTPException(422, "Move sound effects inside the trim range.")
-        if edit.music_track:
-            editor_music_file(edit.music_track)
+        video, _, _ = inspect_clip_edit(folder_name, filename, edit)
         title = read_json(video.with_suffix(".json")).get("title") or video.stem
         title = str(title).removesuffix(" · Edited") + " · Edited"
         payload = edit.model_dump() | {"folder": video.parent.name, "filename": video.name, "source_type": "edit", "title": title}

@@ -111,7 +111,7 @@ class ClipEditorTests(unittest.TestCase):
             metadata.write_text(json.dumps({"title": "Workshop", "description": "Old posting copy", "copy_source": "ai",
                                             "posting_context": "Original speech"}), encoding="utf-8")
 
-            def render(source, output, edit, music, progress):
+            def render(source, output, edit, music, progress, **options):
                 output.write_bytes(b"new data")
 
             with patch.multiple(app, OUTPUT_DIR=root, JOB_QUEUE=JobQueue(root / "queue.sqlite3"), render_edit=render), \
@@ -150,3 +150,63 @@ class ClipEditorTests(unittest.TestCase):
                     batch, = client.get("/api/library").json()["batches"]
                     self.assertEqual([clip["filename"] for clip in batch["clips"]], ["clip-01.mp4", "clip-01-v2.mp4", "clip-01-v3.mp4"])
                     self.assertEqual(client.post(route + original.name, json=data | {"source_revision": "1"}).status_code, 409)
+
+    def test_preview_combines_original_reaction_import_titles_and_captions(self):
+        ffmpeg = get_ffmpeg_cmd()
+        if not which(ffmpeg):
+            self.skipTest("FFmpeg is required to verify composed media")
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            folder = root / "Sample_[original]"
+            folder.mkdir()
+            video = folder / "clip-01.mp4"
+            local = root / "insert.mp4"
+            for path, color, duration, tone in ((video, "blue", 3, 310), (local, "red", .6, 530)):
+                subprocess.run([ffmpeg, "-v", "error", "-f", "lavfi", "-i", f"color={color}:s=160x284:r=30:d={duration}",
+                                "-f", "lavfi", "-i", f"sine=frequency={tone}:duration={duration}",
+                                "-c:v", "libx264", "-c:a", "aac", str(path)], check=True)
+            caption = {"start": .25, "end": .85, "text": "Speech caption example"}
+            with patch.multiple(app, OUTPUT_DIR=root, INSERTS_DIR=root / "inserts"), \
+                    patch.object(app, "transcribe_range", return_value=[caption]) as whisper:
+                client = TestClient(app.app)
+                self.addCleanup(client.close)
+                route = "/api/edit/Sample_[original]/clip-01.mp4/"
+                captions = client.post(route + "captions").json()["captions"]
+                self.assertEqual(captions, [caption])
+                self.assertEqual(whisper.call_args.args[0], video)
+                with local.open("rb") as handle:
+                    upload = client.post("/api/editor-inserts", files={"file": ("My animation.mp4", handle, "video/mp4")})
+                self.assertEqual(upload.status_code, 200, upload.text)
+                asset = upload.json()
+                self.assertEqual(client.get("/api/editor-inserts/" + asset["id"]).status_code, 200)
+                self.assertIn(asset, client.get("/api/editor-assets").json()["inserts"])
+                self.assertEqual(client.get("/api/editor-inserts/laugh").headers["content-type"], "image/gif")
+                response = client.post(route + "preview", json={
+                    "start": .1, "end": 2.6, "look": "cinema", "frame": "neon",
+                    "titles": [{"text": "TEST TITLE", "at": .1, "end": .8, "position": "top"}],
+                    "inserts": [{"asset": "laugh", "at": 1}, {"asset": asset["id"], "at": 2}],
+                    "captions": captions,
+                })
+                self.assertEqual(response.status_code, 200, response.text[:300] if not response.is_success else "")
+                with av.open(BytesIO(response.content)) as file:
+                    self.assertTrue(file.streams.audio)
+                    samples = [(frame.time, frame.to_ndarray(format="rgb24")) for frame in file.decode(video=0)]
+                self.assertAlmostEqual(samples[-1][0], 2.5 + .96 + .6, delta=.12)
+
+                def frame_at(seconds):
+                    return min(samples, key=lambda sample: abs(sample[0] - seconds))[1]
+
+                before = frame_at(.07)
+                titled = frame_at(.5)
+                laugh = frame_at(1.4)
+                inserted = frame_at(3.2)
+                self.assertGreater(titled[43:88, 28:130, 1].max(), 145)
+                self.assertGreater(titled[180:237, 17:143, 0].max(), 160)
+                self.assertGreater(laugh[86:210, 30:130, 0].mean(), before[86:210, 30:130, 0].mean() + 60)
+                self.assertGreater(inserted[140, 80, 0], inserted[140, 80, 2] + 110)
+                backdrop = client.post(route + "preview", json={"start": 0, "end": .8, "frame": "orbit"})
+                self.assertEqual(backdrop.status_code, 200)
+                with av.open(BytesIO(backdrop.content)) as file:
+                    frame = next(file.decode(video=0)).to_ndarray(format="rgb24")
+                self.assertGreater(frame[130, 80, 2], 210)
+                self.assertLess(frame[130, 4, 2], 180)
