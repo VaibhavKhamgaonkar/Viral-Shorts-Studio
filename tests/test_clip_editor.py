@@ -210,3 +210,18 @@ class ClipEditorTests(unittest.TestCase):
                     frame = next(file.decode(video=0)).to_ndarray(format="rgb24")
                 self.assertGreater(frame[130, 80, 2], 210)
                 self.assertLess(frame[130, 4, 2], 180)
+
+                ranged = client.post(route + "preview", json={
+                    "start": 0, "end": 2.6,
+                    "ranges": [{"at": .5, "end": .533, "look": "monochrome"},
+                               {"at": 1.1, "end": 1.7, "frame": "orbit"}],
+                })
+                self.assertEqual(ranged.status_code, 200)
+                with av.open(BytesIO(ranged.content)) as file:
+                    frames = [frame.to_ndarray(format="rgb24") for frame in file.decode(video=0)]
+                self.assertEqual(len(frames), 78)
+                self.assertGreater(frames[14][130, 80, 2], 200)
+                self.assertLess(frames[15][130, 80, 2], 100)
+                self.assertGreater(frames[16][130, 80, 2], 200)
+                self.assertLess(frames[40][130, 3, 2], 180)
+                self.assertGreater(frames[60][130, 3, 2], 200)

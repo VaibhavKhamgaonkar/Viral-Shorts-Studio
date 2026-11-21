@@ -66,6 +66,18 @@ class SpeechCaption(BaseModel):
     text: str = Field(min_length=1, max_length=1000)
 
 
+class PictureSettings(BaseModel):
+    zoom: int = Field(default=100, ge=100, le=150)
+    mirror: bool = False
+    look: Literal["original", "vivid", "monochrome", "cinema", "retro", "cool"] = "original"
+    frame: Literal["", "neon", "sparkles", "sweep", "orbit"] = ""
+
+
+class PictureRange(PictureSettings):
+    at: float = Field(ge=0, allow_inf_nan=False)
+    end: float = Field(gt=0, allow_inf_nan=False)
+
+
 @dataclass(frozen=True)
 class InsertAsset:
     duration: float
@@ -73,13 +85,10 @@ class InsertAsset:
     file: Path | None = None
 
 
-class ClipEdit(BaseModel):
+class ClipEdit(PictureSettings):
     start: float = Field(ge=0, allow_inf_nan=False)
     end: float = Field(gt=0, allow_inf_nan=False)
-    zoom: int = Field(default=100, ge=100, le=150)
-    mirror: bool = False
-    look: Literal["original", "vivid", "monochrome", "cinema", "retro", "cool"] = "original"
-    frame: Literal["", "neon", "sparkles", "sweep", "orbit"] = ""
+    ranges: list[PictureRange] = Field(default_factory=list, max_length=8)
     titles: list[TextCue] = Field(default_factory=list, max_length=8)
     inserts: list[InsertCue] = Field(default_factory=list, max_length=4)
     captions: list[SpeechCaption] = Field(default_factory=list, max_length=1500)
@@ -105,6 +114,17 @@ def validate_timeline(edit, duration):
         raise ValueError("Each title needs at least 0.2 seconds inside the trim range.")
     if any(cut.at >= duration for cut in edit.inserts):
         raise ValueError("Insert each reaction before the end of the trimmed clip.")
+    cursor = 0
+    for picture in sorted(edit.ranges, key=lambda item: item.at):
+        if picture.end <= picture.at or picture.end > duration + .002:
+            raise ValueError("Picture ranges must start and end inside the trim.")
+        if picture.at < cursor:
+            raise ValueError("Picture ranges cannot overlap.")
+        cursor = picture.end
+
+
+def frame_rate(stream):
+    return min(120, max(1, float(stream.average_rate or 30)))
 
 
 @lru_cache(maxsize=len(EFFECTS))
@@ -140,6 +160,7 @@ def render_edit(video, output, edit, music, progress, *, inserts=None, preview=F
         stream = container.streams.video[0]
         width, height = stream.width, stream.height
         has_audio = bool(container.streams.audio)
+        fps = frame_rate(stream)
     duration = edit.end - edit.start
     insert_assets = inserts or {}
     final_duration = duration + sum(insert_assets[cut.asset].duration for cut in edit.inserts)
@@ -149,17 +170,6 @@ def render_edit(video, output, edit, music, progress, *, inserts=None, preview=F
         out_height = max(2, round(height * 240 / max(width, height)) * 2)
     command = [get_ffmpeg_cmd(), "-hide_banner", "-loglevel", "error", "-y",
                "-ss", str(edit.start), "-t", str(duration), "-i", str(video)]
-    picture = []
-    if edit.zoom != 100:
-        crop_width = max(2, int(width / (edit.zoom / 100) / 2) * 2)
-        crop_height = max(2, int(height / (edit.zoom / 100) / 2) * 2)
-        picture.extend([f"crop={crop_width}:{crop_height}", f"scale={width}:{height}"])
-    if edit.mirror:
-        picture.append("hflip")
-    if look := LOOKS[edit.look][1]:
-        picture.append(look)
-    if (out_width, out_height) != (width, height):
-        picture.append(f"scale={out_width}:{out_height}")
     filters = []
     audio = []
     next_input = 1
@@ -198,21 +208,11 @@ def render_edit(video, output, edit, music, progress, *, inserts=None, preview=F
             generate_ass_subtitles([caption.model_dump() for caption in edit.captions],
                                    edit.start, edit.end, scratch / "speech.ass", caption_style="clean")
             graphics.append("ass=speech.ass")
-        video_label = "[0:v:0]"
-        if picture:
-            filters.append(video_label + ",".join(picture) + "[picture]")
-            video_label = "[picture]"
-        if edit.frame:
-            frame_path = scratch / "frame.gif"
-            frame_path.write_bytes(frame_gif(edit.frame))
-            frame_input = add_input(frame_path, "-stream_loop", "-1", "-ignore_loop", "1")
-            filters.append(f"[{frame_input}:v:0]scale={out_width}:{out_height}[border]")
-            if edit.frame == "orbit":
-                filters.append(f"{video_label}scale=trunc(iw*.42)*2:trunc(ih*.42)*2[inset]")
-                filters.append("[border][inset]overlay=(W-w)/2:(H-h)/2:shortest=1[framed]")
-            else:
-                filters.append(f"{video_label}[border]overlay=shortest=1[framed]")
-            video_label = "[framed]"
+        geometry = (width, height, out_width, out_height)
+        if edit.ranges:
+            video_label = render_picture_ranges(edit, duration, fps, geometry, filters, add_input, scratch)
+        else:
+            video_label = apply_picture("[0:v:0]", edit, 0, geometry, filters, add_input, scratch)
         if graphics:
             filters.append(video_label + ",".join(graphics) + "[graphics]")
             video_label = "[graphics]"
@@ -244,6 +244,72 @@ def render_edit(video, output, edit, music, progress, *, inserts=None, preview=F
 
 def mix_audio(labels):
     return "".join(labels) + f"amix=inputs={len(labels)}:duration=longest:normalize=0,"
+
+
+def apply_picture(video, picture, index, geometry, filters, add_input, scratch):
+    width, height, out_width, out_height = geometry
+    chain = []
+    if picture.zoom != 100:
+        crop_width = max(2, int(width / (picture.zoom / 100) / 2) * 2)
+        crop_height = max(2, int(height / (picture.zoom / 100) / 2) * 2)
+        chain.append(f"crop={crop_width}:{crop_height}")
+    if picture.mirror:
+        chain.append("hflip")
+    if look := LOOKS[picture.look][1]:
+        chain.append(look)
+    if picture.zoom != 100 or (out_width, out_height) != (width, height):
+        chain.append(f"scale={out_width}:{out_height}")
+    if chain:
+        output = f"[picture{index}]"
+        filters.append(video + ",".join(chain) + output)
+        video = output
+    if picture.frame:
+        frame_path = scratch / f"frame-{picture.frame}.gif"
+        if not frame_path.exists():
+            frame_path.write_bytes(frame_gif(picture.frame))
+        frame_input = add_input(frame_path, "-stream_loop", "-1", "-ignore_loop", "1")
+        border, inset, output = f"[border{index}]", f"[inset{index}]", f"[framed{index}]"
+        filters.append(f"[{frame_input}:v:0]scale={out_width}:{out_height}{border}")
+        if picture.frame == "orbit":
+            filters.append(f"{video}scale=trunc(iw*.42)*2:trunc(ih*.42)*2{inset}")
+            filters.append(f"{border}{inset}overlay=(W-w)/2:(H-h)/2:shortest=1{output}")
+        else:
+            filters.append(f"{video}{border}overlay=shortest=1{output}")
+        video = output
+    return video
+
+
+def render_picture_ranges(edit, duration, fps, geometry, filters, add_input, scratch):
+    intervals = []
+    cursor = 0
+    last_frame = max(1, round(duration * fps))
+    for picture in sorted(edit.ranges, key=lambda item: item.at):
+        first = min(last_frame - 1, round(picture.at * fps))
+        last = min(last_frame, max(first + 1, round(picture.end * fps)))
+        if first < cursor:
+            raise ValueError("Two picture ranges land on the same frame. Use the frame buttons to separate them.")
+        if first > cursor:
+            intervals.append((cursor, first, edit))
+        intervals.append((first, last, picture))
+        cursor = last
+    if cursor < last_frame:
+        intervals.append((cursor, last_frame, edit))
+    feeds = [f"[picture_source{index}]" for index in range(len(intervals))]
+    split = f",split={len(feeds)}" if len(feeds) > 1 else ""
+    filters.append(f"[0:v:0]fps={fps:.8f}{split}" + "".join(feeds))
+    outputs = []
+    for index, (first, last, picture) in enumerate(intervals):
+        trimmed = f"[picture_trim{index}]"
+        filters.append(f"{feeds[index]}trim=start_frame={first}:end_frame={last},setpts=PTS-STARTPTS{trimmed}")
+        video = apply_picture(trimmed, picture, index, geometry, filters, add_input, scratch)
+        output = f"[picture_range{index}]"
+        filters.append(f"{video}fps={fps:.8f},tpad=stop_mode=clone:stop_duration={2 / fps:.8f},"
+                       f"trim=end_frame={last - first},setsar=1,format=yuv420p{output}")
+        outputs.append(output)
+    if len(outputs) == 1:
+        return outputs[0]
+    filters.append("".join(outputs) + f"concat=n={len(outputs)}:v=1:a=0,setpts=N/({fps:.8f}*TB)[picture_timeline]")
+    return "[picture_timeline]"
 
 
 def concat_inserts(filters, add_input, video, audio, has_mix, edit, assets, scratch, width, height):

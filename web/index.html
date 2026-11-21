@@ -11,6 +11,7 @@
     <script src="/studio/posting-kit.js" defer></script>
     <script src="/studio/clip-editor.js" defer></script>
     <script src="/studio/editor-visuals.js" defer></script>
+    <script src="/studio/editor-timeline.js" defer></script>
     <script src="/studio/task-notifications.js" defer></script>
     <script src="/studio/queue.js" defer></script>
 </head>
@@ -314,26 +315,42 @@
 <dialog id="clip-editor" class="clip-editor" aria-labelledby="editor-title">
     <header class="editor-header">
         <div><h2 id="editor-title">Edit clip</h2><p id="editor-source"></p></div>
-        <form method="dialog"><button class="button button-outline icon-button" aria-label="Close editor"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></form>
+        <form method="dialog"><button class="button button-outline" aria-label="Back to clips, close editor"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg> Back to clips</button></form>
     </header>
     <div class="editor-workspace">
         <section class="editor-preview panel-plum" aria-labelledby="editor-preview-title">
             <div class="editor-preview-header">
-                <h3 id="editor-preview-title">Live preview</h3>
-                <button id="editor-render-preview" class="button button-outline" type="button" disabled>Preview full edit</button>
+                <h3 id="editor-preview-title">Compare clips</h3>
+                <button id="editor-render-preview" class="button button-outline" type="button" disabled>Play rendered edit</button>
             </div>
-            <div class="editor-frame">
-                <div class="editor-source-picture"><video id="editor-video" playsinline preload="metadata" aria-label="Clip preview"></video></div>
-                <img id="editor-frame-overlay" alt="" hidden>
-                <div id="editor-text-overlay" aria-hidden="true"></div>
-                <p id="editor-caption-preview" aria-hidden="true" hidden></p>
-                <video id="editor-full-preview" playsinline controls aria-label="Rendered edit preview" hidden></video>
+            <div class="editor-comparison">
+                <figure class="editor-preview-pane">
+                    <figcaption>Original</figcaption>
+                    <div class="editor-frame editor-original-frame"><video id="editor-original-video" playsinline muted preload="metadata" aria-label="Original clip"></video></div>
+                </figure>
+                <figure class="editor-preview-pane">
+                    <figcaption>Edited <span id="editor-preview-mode">Live</span></figcaption>
+                    <div class="editor-frame">
+                        <div class="editor-source-picture"><video id="editor-video" playsinline preload="metadata" aria-label="Live edited clip"></video></div>
+                        <img id="editor-frame-overlay" alt="" hidden>
+                        <div id="editor-text-overlay" aria-hidden="true"></div>
+                        <p id="editor-caption-preview" aria-hidden="true" hidden></p>
+                        <video id="editor-full-preview" playsinline controls aria-label="Rendered edit preview" hidden></video>
+                    </div>
+                </figure>
             </div>
             <div class="editor-transport" id="editor-live-transport">
                 <button id="editor-play" class="button button-outline" type="button" disabled>Play</button>
                 <input id="editor-seek" type="range" value="0" min="0" max="1" step=".01" aria-label="Preview position" disabled>
                 <span id="editor-time">0:00 / 0:00</span>
+                <div class="editor-frame-step">
+                    <button id="editor-prev-frame" class="button button-outline" type="button" disabled>Previous frame</button>
+                    <button id="editor-next-frame" class="button button-outline" type="button" disabled>Next frame</button>
+                    <span id="editor-current-frame"></span>
+                </div>
             </div>
+            <p id="editor-comparison-status" class="editor-comparison-status" hidden></p>
+            <div id="editor-timeline-tracks" class="editor-timeline-tracks" aria-label="Edit timeline" hidden></div>
         </section>
         <form id="editor-form" class="editor-controls">
             <section class="editor-group">
@@ -347,6 +364,26 @@
                 </div>
                 <label class="check"><input id="editor-mirror" name="mirror" type="checkbox"> Mirror horizontally</label>
             </section>
+            <details class="editor-group editor-disclosure" id="editor-range-effects">
+                <summary>Effects by time range</summary>
+                <p class="editor-hint">Apply a different look, zoom, mirror, or animation to a section or one frame.</p>
+                <div class="editor-fields">
+                    <div class="field"><label for="editor-range-start">Range start (sec)</label><input id="editor-range-start" type="number" min="0" step=".001" value="0"></div>
+                    <div class="field"><label for="editor-range-end">Range end (sec)</label><input id="editor-range-end" type="number" min="0" step=".001" value="1"></div>
+                    <div class="field"><label for="editor-range-look">Range color look</label><select id="editor-range-look"><option value="original">Original</option></select></div>
+                    <div class="field"><label for="editor-range-frame">Range frame or backdrop</label><select id="editor-range-frame"><option value="">None</option></select></div>
+                    <div class="field"><label for="editor-range-zoom">Range zoom <output for="editor-range-zoom" id="editor-range-zoom-value">100%</output></label><input id="editor-range-zoom" type="range" min="100" max="150" value="100"></div>
+                    <label class="check"><input id="editor-range-mirror" type="checkbox"> Mirror this range</label>
+                </div>
+                <div class="editor-reaction-actions">
+                    <button type="button" class="button button-outline" id="editor-mark-range-start">Set start at playhead</button>
+                    <button type="button" class="button button-outline" id="editor-mark-range-end">Set end at playhead</button>
+                    <button type="button" class="button button-outline" id="editor-one-frame">Select this frame</button>
+                    <button type="button" class="button button-outline" id="editor-add-range">Apply range effect</button>
+                    <button type="button" class="button button-plain" id="editor-reset-range" hidden>Cancel range edit</button>
+                </div>
+                <div id="editor-picture-ranges" class="editor-visual-cues"></div>
+            </details>
             <details class="editor-group editor-disclosure">
                 <summary>Animated text</summary>
                 <div class="field"><label for="editor-title-text">Title text</label><textarea id="editor-title-text" rows="2" maxlength="120" placeholder="Enter your on-screen text"></textarea></div>
@@ -363,7 +400,7 @@
                 <div class="editor-reaction-picker">
                     <div class="editor-reaction-thumb">
                         <img id="editor-reaction-image" alt="" hidden>
-                        <video id="editor-reaction-video" playsinline muted loop controls preload="metadata" aria-label="Imported insert preview" hidden></video>
+                        <video id="editor-reaction-video" playsinline muted loop controls preload="metadata" aria-label="Reaction footage preview" hidden></video>
                     </div>
                     <div class="editor-reaction-options">
                         <div class="field"><label for="editor-reaction">Reaction or animation</label><select id="editor-reaction"><option value="">Loading reactions…</option></select></div>
@@ -375,7 +412,7 @@
                         </div>
                     </div>
                 </div>
-                <p class="editor-hint">Insert times use the trimmed source. Use Preview full edit to play the combined result.</p>
+                <p class="editor-hint">Set each cutaway on the trimmed timeline. Choose Play rendered edit to review the cutaways in sequence.</p>
                 <div id="editor-insert-cues" class="editor-visual-cues"></div>
                 <p id="editor-extended-time" class="editor-hint" hidden></p>
             </details>
@@ -387,6 +424,11 @@
                     <button id="editor-clear-captions" class="button button-plain" type="button" hidden>Clear generated captions</button>
                 </div>
                 <p id="editor-caption-status" class="editor-hint" role="status"></p>
+                <div id="editor-caption-list" class="field" hidden>
+                    <label for="editor-caption-select">Jump to a caption in the edited preview</label>
+                    <select id="editor-caption-select"></select>
+                    <button id="editor-jump-caption" class="button button-outline" type="button">Show selected caption</button>
+                </div>
             </details>
             <section class="editor-group">
                 <h3>Audio mix</h3>

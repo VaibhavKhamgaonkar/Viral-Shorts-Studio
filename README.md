@@ -59,15 +59,16 @@ Batches with more than five clips use a horizontal strip. Swipe, use the scrollb
 
 ### Edit an exported clip
 
-1. Click the pencil icon on the clip card. Set trim start and end in seconds, choose a color look, and adjust the center zoom or mirror. Use **Play** and the playhead slider to review the changes.
+1. Click the pencil icon on the clip card to open the full-window editor. **Original** on the left shows the saved clip. **Edited** on the right shows your changes. Both use the same playhead. **Back to clips** returns to the library.
 2. Set separate volume levels for the original audio and a looping background track. Pick a track from your library or add audio you have permission to use. Set **Original** to 0% to mute the original soundtrack.
 3. Audition a built-in effect, then use **Add at playhead** to place it. Up to 12 cues can be timed and leveled independently. Cue times are measured from the start of the trim. The editor also shows the posting kit’s sound suggestion when one is saved.
 4. Choose **Save as new version** to export a numbered copy such as `clip-01-v2.mp4` alongside the original. Choose **Replace existing file** and confirm if you want the edited MP4 to take its place. Follow the export in **Tasks**. Edits start from the rendered MP4, including its burned-in captions.
 
-- **Animated text** places a title at the playhead with a pop, slide, or fade. Edit its start and end times, position, and color.
-- **Trim & picture** includes original color looks, three animated frames, and an orbit backdrop. Use **Preview full edit** to review the rendered picture and audio together.
-- **Reaction inserts** includes six original animated reactions. You can also import an MP4 or WebM animation from 0.2 to 15 seconds and under 40 MB. Each insert pauses the source at its cue, plays the cutaway, then resumes the source. Music runs across the join. Built-in reactions are silent, and imported inserts can keep their audio. All cue times refer to the trimmed source and the edit shows the resulting total duration.
-- **Speech captions → Generate captions** uses the existing `faster-whisper` dependency to transcribe speech in an exported clip. Review the generated captions in the preview and clear them if you want to keep the clip's current picture. This is useful for exports without burned-in captions. Whisper may download the configured model on first use.
+- **Animated text** places a title on the edited preview with a pop, slide, or fade. Edit its start and end times, position, and color. Select its timeline marker to jump back to it.
+- **Trim & picture** sets the whole clip’s default color, zoom, mirror, and animated frame. Use **Effects by time range** to override those settings for up to eight non-overlapping spans. Move the playhead and set range boundaries, or use the frame buttons and **Select this frame** to target a single frame at the saved clip’s frame rate.
+- **Reaction inserts** includes six built-in animations. You can import an MP4 or WebM from 0.2 to 15 seconds and under 40 MB. Each cutaway pauses the original and extends the edited clip. Built-in reactions are silent. Imported inserts can keep their audio, and the music track plays across each join.
+- **Speech captions → Generate captions** uses `faster-whisper` to transcribe the saved clip and jumps to the first generated line inside the trim. Captions appear on the right during their spoken intervals. Select a caption from the menu or timeline to jump to it. This is useful for exports without burned-in captions. Whisper may download the configured model on first use.
+- **Play rendered edit** produces a temporary preview with the final picture, captions, titles, cutaways, and audio mix. Watch it alongside the original before exporting.
 
 For YouTube videos with usable captions, the studio scans the transcript in overlapping windows and asks yt-dlp for selected ranges. If a range request fails it can use a full download. Highlights depend on spoken content and the available transcript. Use an exact range for a moment you already know.
 

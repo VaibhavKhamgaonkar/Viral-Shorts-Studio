@@ -24,7 +24,7 @@ from starlette.background import BackgroundTask
 from config.settings import load_settings, save_settings
 from config.studio import Layout, StudioSettings, studio_settings
 from core.analyzer import generate_post_copy
-from core.clip_editor import ClipEdit, EFFECTS, LOOKS, InsertAsset, effect_wave, render_edit, validate_timeline
+from core.clip_editor import ClipEdit, EFFECTS, LOOKS, InsertAsset, effect_wave, frame_rate, render_edit, validate_timeline
 from core.downloader import DOWNLOADS_DIR, clear_all_downloads_detailed, get_downloads_storage_info, sanitize_filename
 from core.editor_visuals import FRAMES, REACTIONS, REACTION_DURATION, frame_gif, reaction_gif
 from core.job_queue import DuplicateJob, JobQueue
@@ -761,6 +761,17 @@ def preview_clip_edit(folder_name: str, filename: str, edit: ClipEdit):
         raise
     finally:
         EDITOR_PREVIEW_LOCK.release()
+
+
+@app.get("/api/edit/{folder_name}/{filename}/media")
+def editor_source_media(folder_name: str, filename: str):
+    video = exported_video(folder_name, filename)
+    try:
+        with av.open(str(video)) as media:
+            stream = media.streams.video[0]
+            return {"fps": frame_rate(stream)}
+    except (av.error.FFmpegError, IndexError) as error:
+        raise HTTPException(422, "Could not read the clip frame rate.") from error
 
 
 @app.post("/api/edit/{folder_name}/{filename}/captions")

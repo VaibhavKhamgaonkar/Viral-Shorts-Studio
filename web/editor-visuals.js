@@ -26,11 +26,12 @@ function clearRenderedPreview() {
     renderedVideo.hidden = true;
     editorVideo.hidden = false;
     byId("editor-live-transport").hidden = false;
-    byId("editor-preview-title").textContent = "Live preview";
-    renderPreviewButton.textContent = "Preview full edit";
+    setRenderedComparison(null);
+    byId("editor-preview-mode").textContent = "Live";
+    renderPreviewButton.textContent = "Play rendered edit";
     renderPreviewButton.disabled = !editorRange().valid;
     if (editSession) {
-        showEditorFrame();
+        updateEditorPicture();
         updateEditorTransport();
     }
 }
@@ -55,6 +56,8 @@ function resetEditorVisuals() {
     reactionMenu.replaceChildren(new Option("Loading reactions…", ""));
     byId("editor-frame-choice").replaceChildren(new Option("None", ""));
     byId("editor-look").value = "original";
+    resetEditorRange();
+    renderPictureRanges();
     renderVisualCues();
 }
 
@@ -62,6 +65,7 @@ function loadEditorVisualAssets(assets) {
     for (const look of assets.looks) editSession.looks.set(look.id, look.css);
     byId("editor-look").replaceChildren(...assets.looks.map(look => new Option(look.label, look.id)));
     for (const frame of assets.frames) byId("editor-frame-choice").add(new Option(frame.label, frame.id));
+    loadRangeOptions(assets);
     reactionMenu.replaceChildren();
     for (const insert of assets.inserts) addReactionChoice(insert);
     showReaction();
@@ -73,8 +77,7 @@ function addReactionChoice(asset) {
     reactionMenu.add(new Option(asset.label, asset.id));
 }
 
-function showEditorFrame() {
-    const value = byId("editor-frame-choice").value;
+function showEditorFrame(value) {
     previewFrameContainer.dataset.effect = value;
     editorFrame.hidden = !value || !renderedVideo.hidden;
     const src = value ? "/api/editor-frames/" + encodeURIComponent(value) : "";
@@ -151,6 +154,7 @@ function renderVisualCues() {
         return row;
     }));
     updateEditorTransport();
+    renderEditorTimeline();
 }
 
 function removeVisualCue(label, remove) {
@@ -197,6 +201,7 @@ function updateEditorVisuals(start, length, valid) {
     const caption = valid && editSession.captionLines?.find(line => time >= line.start && time < line.end);
     captionOverlay.hidden = !caption;
     if (caption && captionOverlay.textContent !== caption.text) captionOverlay.textContent = caption.text;
+    showCaptionIndicator(Boolean(caption));
     const total = byId("editor-extended-time");
     total.hidden = !valid || editSession.inserts.length === 0;
     if (!total.hidden) {
@@ -213,6 +218,11 @@ function validateEditorVisuals(session, duration) {
     if (session.inserts.some(cut => !Number.isFinite(cut.at) || cut.at < 0 || cut.at >= duration)) {
         return "Put each insert before the end of the trimmed clip.";
     }
+    const ordered = [...session.ranges].sort((left, right) => left.at - right.at);
+    if (ordered.some((range, index) => range.at < 0 || range.end > duration + .002 ||
+            range.end <= range.at || (index && ordered[index - 1].end > range.at))) {
+        return "Keep picture ranges within the trim and avoid overlaps.";
+    }
     return "";
 }
 
@@ -220,7 +230,6 @@ editorForm.addEventListener("input", () => {
     if (renderedPreviewRequest || renderedPreviewUrl) clearRenderedPreview();
     message("editor-status");
 });
-byId("editor-frame-choice").addEventListener("change", showEditorFrame);
 reactionMenu.addEventListener("change", showReaction);
 
 byId("editor-add-title").addEventListener("click", () => {
@@ -239,8 +248,10 @@ byId("editor-add-title").addEventListener("click", () => {
     else if (editSession.titles.length < 8) editSession.titles.push({
         ...content, at: Number(at.toFixed(2)), end: Number(Math.min(length, at + 2.5).toFixed(2)),
     });
+    const savedTitle = selectedTitle || editSession.titles.at(-1);
     resetTitleDraft();
     renderVisualCues();
+    if (savedTitle) jumpToEditorCue(savedTitle.at, savedTitle.end);
 });
 
 byId("editor-add-reaction").addEventListener("click", () => {
@@ -280,6 +291,7 @@ function setSpeechCaptions(captions) {
     });
     byId("editor-clear-captions").hidden = captions.length === 0;
     updateEditorTransport();
+    renderEditorTimeline();
 }
 
 byId("editor-generate-captions").addEventListener("click", async ({currentTarget}) => {
@@ -293,7 +305,11 @@ byId("editor-generate-captions").addEventListener("click", async ({currentTarget
         if (editSession !== session) return;
         clearRenderedPreview();
         setSpeechCaptions(result.captions);
-        status.textContent = result.message || result.captions.length + " speech segments ready for preview and export.";
+        const first = visibleEditorCaptions()[0];
+        if (first) jumpToEditorCue(first.at, first.end);
+        status.textContent = result.message || (first
+            ? "Showing the first caption in the edited preview. Select a cue to jump to another line."
+            : "Speech was found outside this trim. Adjust the trim to include it.");
     } catch (error) {
         if (editSession === session) status.textContent = error.message;
     } finally {
@@ -336,9 +352,11 @@ renderPreviewButton.addEventListener("click", async () => {
         renderedVideo.hidden = false;
         editorVideo.hidden = true;
         byId("editor-live-transport").hidden = true;
-        byId("editor-preview-title").textContent = "Rendered preview";
-        renderPreviewButton.textContent = "Back to live preview";
+        setRenderedComparison(edit);
+        byId("editor-preview-mode").textContent = "Rendered";
+        renderPreviewButton.textContent = "Back to live edit";
         updateEditorTransport();
+        renderedVideo.play().catch(() => {});
     } catch (error) {
         if (renderedPreviewRequest !== request) return;
         clearRenderedPreview();

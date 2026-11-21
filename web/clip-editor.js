@@ -38,16 +38,20 @@ function updateEditorTransport() {
     editorSeek.value = elapsed;
     byId("editor-time").textContent = editorClock(elapsed) + " / " + editorClock(length);
     editorSeek.disabled = editorPlay.disabled = !valid;
+    byId("editor-prev-frame").disabled = byId("editor-next-frame").disabled = !valid;
     editorExport.disabled = !valid || Boolean(editSession?.saving);
     byId("editor-add-effect").disabled = !valid || !byId("editor-effect").value || (editSession?.cues.length || 0) >= 12;
+    updateEditorComparison(start, elapsed, valid);
     updateEditorVisuals(start, length, valid);
 }
 
 function updateEditorPicture() {
-    const zoom = Number(byId("editor-zoom").value) / 100;
-    const look = byId("editor-look").value;
+    const picture = activeEditorPicture();
+    const zoom = picture.zoom / 100;
+    const look = picture.look;
     editorVideo.style.filter = editSession?.looks.get(look) || ({vivid: "saturate(1.25)", monochrome: "grayscale(1)"})[look] || "none";
-    editorVideo.style.transform = "scale(" + zoom + ") scaleX(" + (byId("editor-mirror").checked ? -1 : 1) + ")";
+    editorVideo.style.transform = "scale(" + zoom + ") scaleX(" + (picture.mirror ? -1 : 1) + ")";
+    showEditorFrame(picture.frame);
     byId("editor-zoom-value").textContent = byId("editor-zoom").value + "%";
 }
 
@@ -214,9 +218,10 @@ function changeEditorTrack() {
 }
 
 async function openClipEditor(clip, path, uri) {
-    const session = editSession = {path, clip, cues: [], titles: [], inserts: [], captions: [], looks: new Map(), insertAssets: new Map()};
+    const session = editSession = {path, clip, cues: [], titles: [], inserts: [], captions: [], ranges: [], fps: 30, looks: new Map(), insertAssets: new Map()};
     editorForm.reset();
     resetEditorVisuals();
+    openEditorComparison(uri, session);
     byId("editor-track").replaceChildren(new Option("No music", ""));
     byId("editor-effect").replaceChildren(new Option("Loading sounds…", ""));
     byId("editor-hear-effect").disabled = true;
@@ -247,8 +252,13 @@ async function openClipEditor(clip, path, uri) {
 editorVideo.addEventListener("loadedmetadata", () => {
     if (!editorDialog.open) return;
     byId("editor-end").value = editorVideo.duration.toFixed(2);
-    editorVideo.closest(".editor-frame").style.aspectRatio = editorVideo.videoWidth + "/" + editorVideo.videoHeight;
+    const aspect = editorVideo.videoWidth / editorVideo.videoHeight;
+    for (const frame of editorDialog.querySelectorAll(".editor-frame")) {
+        frame.style.aspectRatio = String(aspect);
+        frame.style.setProperty("--preview-max-width", "min(" + Math.min(85, 49 * aspect) + "vh, 460px)");
+    }
     updateEditorTransport();
+    renderEditorTimeline();
 });
 editorVideo.addEventListener("error", () => {
     if (editorDialog.open) message("editor-status", "Could not load this video for preview.");
@@ -292,7 +302,7 @@ editorPlay.addEventListener("click", async () => {
 });
 editorSeek.addEventListener("input", () => { editorVideo.currentTime = editorRange().start + editorSeek.valueAsNumber; });
 editorForm.addEventListener("input", ({target}) => {
-    if (["look", "zoom", "mirror"].includes(target.name)) updateEditorPicture();
+    if (["look", "zoom", "mirror", "frame"].includes(target.name)) updateEditorPicture();
     if (["source_level", "music_level"].includes(target.name)) updateEditorLevels();
 });
 for (const id of ["editor-start", "editor-end"]) {
@@ -301,6 +311,7 @@ for (const id of ["editor-start", "editor-end"]) {
         const {start, end, valid} = editorRange();
         if (valid && (id === "editor-start" || editorVideo.currentTime >= end)) editorVideo.currentTime = start;
         updateEditorTransport();
+        renderEditorTimeline();
     });
 }
 
@@ -384,6 +395,7 @@ function editorPayload() {
         save_mode: fields.get("save_mode"), source_revision: session.clip.file_revision || "",
         cues: session.cues.map(({effect, at, level}) => ({effect, at, level})),
         frame: fields.get("frame"), titles: session.titles, inserts: session.inserts, captions: session.captions,
+        ranges: session.ranges,
     };
 }
 
@@ -413,6 +425,7 @@ editorForm.addEventListener("submit", event => {
 editorDialog.addEventListener("close", () => {
     if (editorDialog.open) return;
     clearRenderedPreview();
+    closeEditorComparison();
     releaseReactionPreview();
     editSession = undefined;
     cancelAnimationFrame(previewFrame);
