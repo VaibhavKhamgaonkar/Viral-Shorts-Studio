@@ -3,8 +3,13 @@
 const comparisonVideo = byId("editor-original-video");
 const timelineTracks = byId("editor-timeline-tracks");
 const comparisonStatus = byId("editor-comparison-status");
+const focusPicker = byId("editor-focus-picker");
+const focusToggle = byId("editor-focus-toggle");
+const focusStatus = byId("editor-focus-status");
+const focusGuide = byId("editor-focus-guide");
 let selectedPictureRange;
 let observedPictureRange;
+let focusDraft = false;
 let renderedComparison;
 let renderedFrame;
 let activeMarkers = [];
@@ -36,9 +41,10 @@ function syncOriginal(time, playing) {
 }
 
 function activeEditorPicture() {
+    if (focusDraft) return rangePicture();
     return pictureRangeAtPlayhead() || {
         look: byId("editor-look").value, frame: byId("editor-frame-choice").value,
-        zoom: Number(byId("editor-zoom").value), mirror: byId("editor-mirror").checked,
+        zoom: Number(byId("editor-zoom").value), mirror: byId("editor-mirror").checked, focus_x: 50, focus_y: 50,
     };
 }
 
@@ -69,6 +75,7 @@ function setRenderedComparison(edit) {
     cancelAnimationFrame(renderedFrame);
     renderedComparison = edit || undefined;
     if (!edit) return;
+    endFocusDraft();
     timelineTracks.hidden = true;
     comparisonStatus.hidden = false;
     comparisonStatus.textContent = "During an insert, Original pauses at the cut while Edited plays the cutaway.";
@@ -138,7 +145,7 @@ function renderEditorTimeline() {
     const tracks = [
         ["captions", "Captions", visibleEditorCaptions()],
         ["titles", "Titles", editSession.titles],
-        ["picture", "Picture", editSession.ranges.map(range => ({...range, text: "Picture effect"}))],
+        ["picture", "Picture", editSession.ranges.map(range => ({...range, text: hasOffCenterFocus(range) ? "Focus crop" : "Picture effect"}))],
         ["inserts", "Inserts", editSession.inserts.map(cut => ({at: cut.at, end: cut.at, text: editSession.insertAssets.get(cut.asset).label}))],
     ];
     const previous = byId("editor-caption-select").value;
@@ -198,8 +205,124 @@ function loadRangeOptions(assets) {
     byId("editor-range-frame").replaceChildren(new Option("None", ""), ...assets.frames.map(frame => new Option(frame.label, frame.id)));
 }
 
+function rangePicture() {
+    return {
+        look: byId("editor-range-look").value, frame: byId("editor-range-frame").value,
+        zoom: byId("editor-range-zoom").valueAsNumber, mirror: byId("editor-range-mirror").checked,
+        focus_x: byId("editor-focus-x").valueAsNumber, focus_y: byId("editor-focus-y").valueAsNumber,
+    };
+}
+
+function hasOffCenterFocus(picture) {
+    return picture.zoom > 100 && (picture.focus_x !== 50 || picture.focus_y !== 50);
+}
+
+function focusCrop(picture) {
+    const size = 10000 / picture.zoom;
+    const half = size / 2;
+    const center = coordinate => Math.min(100 - half, Math.max(half, coordinate));
+    return {size, x: center(picture.focus_x), y: center(picture.focus_y)};
+}
+
+function updateFocusGuide({size, x, y}) {
+    focusGuide.hidden = !focusDraft;
+    if (!focusDraft) return;
+    focusGuide.style.width = focusGuide.style.height = size + "%";
+    focusGuide.style.left = (x - size / 2) + "%";
+    focusGuide.style.top = (y - size / 2) + "%";
+}
+
+function updateRangeZoom() {
+    byId("editor-range-zoom-value").textContent = byId("editor-range-zoom").value + "%";
+}
+
+function setFocusPoint(x, y) {
+    for (const [axis, value] of [["x", x], ["y", y]]) {
+        byId("editor-focus-" + axis).value = Math.round(value);
+        byId("editor-focus-" + axis + "-value").textContent = Math.round(value) + "%";
+    }
+}
+
+function setFocusPicker(open) {
+    focusPicker.hidden = !open;
+    focusToggle.setAttribute("aria-pressed", String(open));
+    focusStatus.hidden = !focusDraft;
+    focusStatus.textContent = open ? "Select a subject in the Original preview."
+        : focusDraft ? "Focus preview. Apply the range effect to use this crop in your edit." : "";
+}
+
+function endFocusDraft() {
+    focusDraft = false;
+    focusGuide.hidden = true;
+    setFocusPicker(false);
+    byId("editor-reset-range").hidden = !selectedPictureRange;
+}
+
+function previewRangeFocus() {
+    if (!editorRange().valid) return;
+    clearRenderedPreview();
+    editorVideo.pause();
+    if (rangePicture().zoom === 100) byId("editor-range-zoom").value = 160;
+    focusDraft = true;
+    const cancel = byId("editor-reset-range");
+    cancel.hidden = false;
+    cancel.textContent = selectedPictureRange ? "Cancel range edit" : "Cancel focus preview";
+    setFocusPicker(!focusPicker.hidden);
+    updateRangeZoom();
+    updateEditorPicture();
+}
+
+focusToggle.addEventListener("click", () => {
+    if (!focusPicker.hidden) {
+        setFocusPicker(false);
+        return;
+    }
+    previewRangeFocus();
+    if (!focusDraft) return;
+    setFocusPicker(true);
+    focusPicker.focus();
+});
+focusPicker.addEventListener("click", event => {
+    const bounds = focusPicker.getBoundingClientRect();
+    const toPercent = (point, origin, size) => Math.min(100, Math.max(0, (point - origin) / size * 100));
+    setFocusPoint(event.detail ? toPercent(event.clientX, bounds.left, bounds.width) : 50,
+        event.detail ? toPercent(event.clientY, bounds.top, bounds.height) : 50);
+    setFocusPicker(false);
+    focusToggle.focus({preventScroll: true});
+    updateEditorPicture();
+});
+focusPicker.addEventListener("keydown", event => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    setFocusPicker(false);
+    focusToggle.focus();
+});
+for (const axis of ["x", "y"]) {
+    byId("editor-focus-" + axis).addEventListener("input", () => {
+        const {focus_x, focus_y} = rangePicture();
+        setFocusPoint(focus_x, focus_y);
+        previewRangeFocus();
+    });
+}
+byId("editor-focus-center").addEventListener("click", () => {
+    setFocusPoint(50, 50);
+    previewRangeFocus();
+});
+byId("editor-range-effects").addEventListener("toggle", ({target}) => {
+    if (target.open || !focusDraft) return;
+    endFocusDraft();
+    updateEditorPicture();
+});
+editorVideo.addEventListener("playing", () => {
+    if (!focusDraft) return;
+    endFocusDraft();
+    updateEditorPicture();
+});
+
 function resetEditorRange() {
     selectedPictureRange = undefined;
+    endFocusDraft();
+    setFocusPoint(50, 50);
     byId("editor-add-range").textContent = "Apply range effect";
     byId("editor-reset-range").hidden = true;
 }
@@ -209,17 +332,22 @@ function renderPictureRanges() {
         const row = element("div", "editor-visual-cue");
         const look = [...byId("editor-range-look").options].find(option => option.value === range.look)?.text || range.look;
         const frame = [...byId("editor-range-frame").options].find(option => option.value === range.frame)?.text;
-        const name = action(frame && range.frame ? frame : look, () => {
+        const appearance = frame && range.frame ? frame : look;
+        const name = action(hasOffCenterFocus(range) ? "Focus crop · " + appearance : appearance, () => {
+            endFocusDraft();
             selectedPictureRange = range;
             byId("editor-range-start").value = range.at.toFixed(3);
             byId("editor-range-end").value = range.end.toFixed(3);
             byId("editor-range-look").value = range.look;
             byId("editor-range-frame").value = range.frame;
             byId("editor-range-zoom").value = range.zoom;
-            byId("editor-range-zoom-value").textContent = range.zoom + "%";
+            updateRangeZoom();
+            setFocusPoint(range.focus_x, range.focus_y);
             byId("editor-range-mirror").checked = range.mirror;
             byId("editor-add-range").textContent = "Update range effect";
-            byId("editor-reset-range").hidden = false;
+            const cancel = byId("editor-reset-range");
+            cancel.hidden = false;
+            cancel.textContent = "Cancel range edit";
             jumpToEditorCue(range.at, range.end);
         }, null, "button-plain");
         name.classList.add("editor-visual-name");
@@ -249,8 +377,16 @@ byId("editor-one-frame").addEventListener("click", () => {
     byId("editor-range-start").value = at.toFixed(3);
     byId("editor-range-end").value = (at + step).toFixed(3);
 });
-byId("editor-range-zoom").addEventListener("input", ({target}) => { byId("editor-range-zoom-value").textContent = target.value + "%"; });
-byId("editor-reset-range").addEventListener("click", resetEditorRange);
+for (const id of ["editor-range-zoom", "editor-range-look", "editor-range-frame", "editor-range-mirror"]) {
+    byId(id).addEventListener("input", () => {
+        updateRangeZoom();
+        if (focusDraft) updateEditorPicture();
+    });
+}
+byId("editor-reset-range").addEventListener("click", () => {
+    resetEditorRange();
+    updateEditorPicture();
+});
 byId("editor-add-range").addEventListener("click", () => {
     if (!editSession || !editorRange().valid) return;
     const at = byId("editor-range-start").valueAsNumber;
@@ -268,10 +404,7 @@ byId("editor-add-range").addEventListener("click", () => {
         message("editor-status", "An edit can include up to eight picture ranges.");
         return;
     }
-    const picture = {
-        at, end, look: byId("editor-range-look").value, frame: byId("editor-range-frame").value,
-        zoom: Number(byId("editor-range-zoom").value), mirror: byId("editor-range-mirror").checked,
-    };
+    const picture = {at, end, ...rangePicture()};
     if (selectedPictureRange) Object.assign(selectedPictureRange, picture);
     else editSession.ranges.push(picture);
     resetEditorRange();

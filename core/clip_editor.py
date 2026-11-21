@@ -71,9 +71,12 @@ class PictureSettings(BaseModel):
     mirror: bool = False
     look: Literal["original", "vivid", "monochrome", "cinema", "retro", "cool"] = "original"
     frame: Literal["", "neon", "sparkles", "sweep", "orbit"] = ""
+    focus_x: float = Field(default=50, ge=0, le=100, allow_inf_nan=False)
+    focus_y: float = Field(default=50, ge=0, le=100, allow_inf_nan=False)
 
 
 class PictureRange(PictureSettings):
+    zoom: int = Field(default=100, ge=100, le=250)
     at: float = Field(ge=0, allow_inf_nan=False)
     end: float = Field(gt=0, allow_inf_nan=False)
 
@@ -252,7 +255,9 @@ def apply_picture(video, picture, index, geometry, filters, add_input, scratch):
     if picture.zoom != 100:
         crop_width = max(2, int(width / (picture.zoom / 100) / 2) * 2)
         crop_height = max(2, int(height / (picture.zoom / 100) / 2) * 2)
-        chain.append(f"crop={crop_width}:{crop_height}")
+        left = min(width - crop_width, max(0, width * picture.focus_x / 100 - crop_width / 2))
+        top = min(height - crop_height, max(0, height * picture.focus_y / 100 - crop_height / 2))
+        chain.append(f"crop={crop_width}:{crop_height}:{left:.4f}:{top:.4f}")
     if picture.mirror:
         chain.append("hflip")
     if look := LOOKS[picture.look][1]:

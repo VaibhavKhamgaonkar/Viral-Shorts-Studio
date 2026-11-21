@@ -406,6 +406,12 @@ dialog::backdrop { background: #231a29b5; }
 .editor-frame { position: relative; container-type: size; aspect-ratio: 9 / 16; width: min(100%, var(--preview-max-width, 29vh)); background: #151017; border-radius: 8px; overflow: hidden; }
 .editor-source-picture { position: absolute; inset: 0; overflow: hidden; }
 .editor-frame video { display: block; width: 100%; height: 100%; object-fit: contain; }
+.editor-focus-picker { position: absolute; inset: 0; z-index: 1; border: 0; padding: 0; background: transparent; cursor: crosshair; }
+.editor-focus-picker:focus-visible { outline: 2px solid var(--accent); outline-offset: -4px; }
+.editor-focus-guide { position: absolute; border: 2px solid var(--accent); box-shadow: 0 0 0 100vmax #15101770; pointer-events: none; }
+.editor-focus-settings { min-width: 0; margin: 3px 0 10px; padding: 7px 10px 2px; border: 1px solid var(--line); border-radius: 8px; }
+.editor-focus-settings legend { padding-inline: 4px; font-size: .85rem; font-weight: 700; }
+.editor-focus-settings .editor-reaction-actions { margin: 0 0 8px; }
 #editor-frame-overlay, #editor-text-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 #editor-frame-overlay { object-fit: fill; }
 .editor-frame[data-effect="orbit"] .editor-source-picture { inset: 8%; z-index: 1; }

@@ -39,6 +39,7 @@ function updateEditorTransport() {
     byId("editor-time").textContent = editorClock(elapsed) + " / " + editorClock(length);
     editorSeek.disabled = editorPlay.disabled = !valid;
     byId("editor-prev-frame").disabled = byId("editor-next-frame").disabled = !valid;
+    byId("editor-focus-toggle").disabled = !valid;
     editorExport.disabled = !valid || Boolean(editSession?.saving);
     byId("editor-add-effect").disabled = !valid || !byId("editor-effect").value || (editSession?.cues.length || 0) >= 12;
     updateEditorComparison(start, elapsed, valid);
@@ -48,9 +49,13 @@ function updateEditorTransport() {
 function updateEditorPicture() {
     const picture = activeEditorPicture();
     const zoom = picture.zoom / 100;
+    const crop = focusCrop(picture);
+    const x = (50 - crop.x) * zoom;
+    const y = (50 - crop.y) * zoom;
     const look = picture.look;
     editorVideo.style.filter = editSession?.looks.get(look) || ({vivid: "saturate(1.25)", monochrome: "grayscale(1)"})[look] || "none";
-    editorVideo.style.transform = "scale(" + zoom + ") scaleX(" + (picture.mirror ? -1 : 1) + ")";
+    editorVideo.style.transform = `translate(${x}%, ${y}%) scale(${zoom}) scaleX(${picture.mirror ? -1 : 1})`;
+    updateFocusGuide(crop);
     showEditorFrame(picture.frame);
     byId("editor-zoom-value").textContent = byId("editor-zoom").value + "%";
 }

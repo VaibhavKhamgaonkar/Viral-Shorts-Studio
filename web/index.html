@@ -326,7 +326,11 @@
             <div class="editor-comparison">
                 <figure class="editor-preview-pane">
                     <figcaption>Original</figcaption>
-                    <div class="editor-frame editor-original-frame"><video id="editor-original-video" playsinline muted preload="metadata" aria-label="Original clip"></video></div>
+                    <div class="editor-frame editor-original-frame">
+                        <video id="editor-original-video" playsinline muted preload="metadata" aria-label="Original clip"></video>
+                        <div id="editor-focus-guide" class="editor-focus-guide" aria-hidden="true" hidden></div>
+                        <button id="editor-focus-picker" class="editor-focus-picker" type="button" aria-label="Pick focus in the original frame. Press Enter to use the center." hidden></button>
+                    </div>
                 </figure>
                 <figure class="editor-preview-pane">
                     <figcaption>Edited <span id="editor-preview-mode">Live</span></figcaption>
@@ -349,6 +353,7 @@
                     <span id="editor-current-frame"></span>
                 </div>
             </div>
+            <p id="editor-focus-status" class="editor-comparison-status" role="status" hidden></p>
             <p id="editor-comparison-status" class="editor-comparison-status" hidden></p>
             <div id="editor-timeline-tracks" class="editor-timeline-tracks" aria-label="Edit timeline" hidden></div>
         </section>
@@ -372,9 +377,20 @@
                     <div class="field"><label for="editor-range-end">Range end (sec)</label><input id="editor-range-end" type="number" min="0" step=".001" value="1"></div>
                     <div class="field"><label for="editor-range-look">Range color look</label><select id="editor-range-look"><option value="original">Original</option></select></div>
                     <div class="field"><label for="editor-range-frame">Range frame or backdrop</label><select id="editor-range-frame"><option value="">None</option></select></div>
-                    <div class="field"><label for="editor-range-zoom">Range zoom <output for="editor-range-zoom" id="editor-range-zoom-value">100%</output></label><input id="editor-range-zoom" type="range" min="100" max="150" value="100"></div>
+                    <div class="field"><label for="editor-range-zoom">Range zoom <output for="editor-range-zoom" id="editor-range-zoom-value">100%</output></label><input id="editor-range-zoom" type="range" min="100" max="250" value="100"></div>
                     <label class="check"><input id="editor-range-mirror" type="checkbox"> Mirror this range</label>
                 </div>
+                <fieldset class="editor-focus-settings">
+                    <legend>Focus point</legend>
+                    <div class="editor-reaction-actions">
+                        <button type="button" class="button button-outline" id="editor-focus-toggle" aria-pressed="false">Pick point on original</button>
+                        <button type="button" class="button button-plain" id="editor-focus-center">Center focus</button>
+                    </div>
+                    <div class="editor-fields">
+                        <div class="field"><label for="editor-focus-x">Horizontal position <output id="editor-focus-x-value">50%</output></label><input id="editor-focus-x" type="range" min="0" max="100" value="50"></div>
+                        <div class="field"><label for="editor-focus-y">Vertical position <output id="editor-focus-y-value">50%</output></label><input id="editor-focus-y" type="range" min="0" max="100" value="50"></div>
+                    </div>
+                </fieldset>
                 <div class="editor-reaction-actions">
                     <button type="button" class="button button-outline" id="editor-mark-range-start">Set start at playhead</button>
                     <button type="button" class="button button-outline" id="editor-mark-range-end">Set end at playhead</button>

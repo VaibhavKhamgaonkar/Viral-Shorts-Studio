@@ -225,3 +225,31 @@ class ClipEditorTests(unittest.TestCase):
                 self.assertGreater(frames[16][130, 80, 2], 200)
                 self.assertLess(frames[40][130, 3, 2], 180)
                 self.assertGreater(frames[60][130, 3, 2], 200)
+
+    def test_focus_crop_reframes_one_frame_and_clamps_to_the_source_edges(self):
+        ffmpeg = get_ffmpeg_cmd()
+        if not which(ffmpeg):
+            self.skipTest("FFmpeg is required to verify the focus crop")
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            folder = root / "Focus_[original]"
+            folder.mkdir()
+            source = folder / "clip-01.mp4"
+            subprocess.run([ffmpeg, "-v", "error", "-f", "lavfi", "-i",
+                            "color=blue:s=160x284:r=30:d=1,drawbox=x=100:y=170:w=60:h=114:c=red:t=fill",
+                            "-c:v", "libx264", "-pix_fmt", "yuv420p", str(source)], check=True)
+            with patch.multiple(app, OUTPUT_DIR=root, JOB_QUEUE=JobQueue(root / "queue.sqlite3")), \
+                    TestClient(app.app) as client:
+                route = "/api/edit/Focus_[original]/clip-01.mp4/preview"
+                focus = {"at": .5, "end": .533, "zoom": 200, "focus_x": 100, "focus_y": 100}
+                response = client.post(route, json={"start": 0, "end": .9, "ranges": [focus]})
+                self.assertEqual(response.status_code, 200)
+                with av.open(BytesIO(response.content)) as media:
+                    frames = [frame.to_ndarray(format="rgb24").astype(int) for frame in media.decode(video=0)]
+                self.assertEqual(len(frames), 27)
+                self.assertGreater(frames[14][142, 80, 2], 200)
+                self.assertGreater(frames[15][142, 80, 0], 200)
+                self.assertGreater(frames[16][142, 80, 2], 200)
+                self.assertGreater(frames[15][40, 12, 2], 200)
+                invalid = client.post(route, json={"start": 0, "end": .9, "ranges": [focus | {"focus_x": 101}]})
+                self.assertEqual(invalid.status_code, 422)
