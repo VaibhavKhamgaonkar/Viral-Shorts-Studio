@@ -396,7 +396,10 @@ async function loadTasks({moveFocus = false} = {}) {
     const fields = new FormData(libraryFilters);
     const query = fields.get("q").trim();
     const filterCount = ["source", "selection", "after", "before"].filter(name => fields.get(name)).length;
-    byId("library-filter-label").textContent = filterCount ? "Filters (" + filterCount + ")" : "Filters";
+    const filterBadge = byId("library-filter-count");
+    filterBadge.textContent = filterCount;
+    filterBadge.hidden = filterCount === 0;
+    byId("library-filter-toggle").setAttribute("aria-label", filterCount ? "Filters, " + filterCount + " active" : "Filters");
     byId("library-reset").hidden = !query && !filterCount && fields.get("sort") === "newest" && fields.get("size") === "3";
     if (query) params.set("q", query);
     for (const name of ["sort", "size", "source", "selection"]) {
@@ -421,10 +424,11 @@ async function loadTasks({moveFocus = false} = {}) {
         byId("library-empty").hidden = data.total_clips !== 0 || Boolean(query || filterCount);
         byId("library-no-matches").hidden = count !== 0 || !query && !filterCount;
         results.replaceChildren(...data.batches.map(batchCard));
+        byId("library-page-size").hidden = data.total_batches <= 3 && fields.get("size") === "3";
         byId("library-pagination").hidden = data.pages <= 1;
         byId("library-prev").disabled = data.page <= 1;
         byId("library-next").disabled = data.page >= data.pages;
-        byId("library-page-label").textContent = "Page " + data.page + " of " + data.pages + " · " + data.total_batches + " batches";
+        byId("library-page-label").textContent = "Page " + data.page + " of " + data.pages;
         if (focus) byId("batch-" + focus)?.scrollIntoView({block: "start"});
         if (moveFocus && (byId("library-prev").disabled || byId("library-next").disabled)) {
             byId("library-page-label").focus({preventScroll: true});
@@ -568,13 +572,16 @@ byId("source-upload").addEventListener("click", () => { setSource("upload"); syn
 byId("selection").addEventListener("change", showRangeOptions);
 byId("refresh").addEventListener("click", () => loadTasks());
 byId("library-query").addEventListener("input", () => updateLibrarySearch(true));
+byId("library-filter-toggle").addEventListener("click", ({currentTarget}) => {
+    const panel = byId("library-advanced");
+    panel.hidden = !panel.hidden;
+    currentTarget.setAttribute("aria-expanded", String(!panel.hidden));
+});
 libraryFilters.addEventListener("submit", (event) => { event.preventDefault(); updateLibrarySearch(); });
 libraryFilters.addEventListener("change", (event) => {
     if (event.target.name !== "q") updateLibrarySearch();
 });
-for (const id of ["library-reset", "library-clear-no-matches"]) {
-    byId(id).addEventListener("click", () => { clearLibrary(); updateLibrarySearch(); });
-}
+byId("library-reset").addEventListener("click", () => { clearLibrary(); updateLibrarySearch(); });
 for (const [id, direction] of [["library-prev", -1], ["library-next", 1]]) {
     byId(id).addEventListener("click", () => { libraryPage += direction; loadTasks({moveFocus: true}); });
 }

@@ -53,7 +53,7 @@ python -m venv venv
 
 Use **Regenerate draft** to refresh an existing kit without re-rendering the MP4. Add a note about the clip's key visual moment when captions are sparse or the model missed something. Older exports can use their saved speech captions or your notes. Hashtags are local AI suggestions based on the clip. [YouTube hashtag guidance](https://support.google.com/youtube/answer/6390658?hl=en)
 
-Use the search above the exports on **Create clips** or **Clip library** to find a task ID, clip title, caption, hashtag, or saved spoken phrase. **Filters** narrows results by source, clip selection method, or export date and time in your browser’s local time zone. Sort by export time or source title. Pages hold 3 batches by default, with 6 and 12 available in Filters. When a keyword matches individual clips, the results show those clips under their batch.
+Use the search above the exports on **Create clips** or **Clip library** to find a task ID, clip title, caption, hashtag, or saved spoken phrase. **Filters** narrows results by source, clip selection method, or export date and time in your browser’s local time zone. Sort by export time or source title. The page controls show 3 batches by default and offer 6 and 12 when there are more results. When a keyword matches individual clips, the results show those clips under their batch.
 
 For YouTube videos with usable captions, the studio scans the transcript in overlapping windows and asks yt-dlp for selected ranges. If a range request fails it can use a full download. Highlights depend on spoken content and the available transcript. Use an exact range for a moment you already know.
 
