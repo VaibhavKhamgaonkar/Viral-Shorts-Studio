@@ -1,3 +1,4 @@
+import json
 import subprocess
 import tempfile
 import time
@@ -18,6 +19,14 @@ from core.transformer import get_ffmpeg_cmd, inspect_media
 
 
 class ClipEditorTests(unittest.TestCase):
+    def wait_for_job(self, client, job_id):
+        for _ in range(150):
+            job = client.get("/api/job/" + job_id).json()
+            if job["status"] in {"completed", "failed"}:
+                return job
+            time.sleep(.05)
+        self.fail(f"Edit {job_id} did not finish.")
+
     def test_sound_assets_match_the_audition_files(self):
         client = TestClient(app.app)
         self.addCleanup(client.close)
@@ -63,15 +72,13 @@ class ClipEditorTests(unittest.TestCase):
                     queued = client.post(route, json=edit)
                     self.assertEqual(queued.status_code, 200, queued.text)
                     job_id = queued.json()["job_id"]
-                    for _ in range(150):
-                        job = client.get("/api/job/" + job_id).json()
-                        if job["status"] in {"completed", "failed"}:
-                            break
-                        time.sleep(.05)
+                    job = self.wait_for_job(client, job_id)
                     self.assertEqual(job["status"], "completed", job)
+                    self.assertEqual(job["result_batch_id"], "original")
                     self.assertIn("Rendering edit", [step["stage"] for step in job["activity"]])
                     batch, = client.get("/api/library", params={"selection": "edited"}).json()["batches"]
                     rendered = exports / batch["folder_name"] / batch["clips"][0]["filename"]
+                    self.assertEqual(rendered, original / "clip-01-v2.mp4")
                     self.assertEqual(source.read_bytes(), saved)
                     duration, has_audio = inspect_media(rendered)
                     self.assertAlmostEqual(duration, 2, delta=.08)
@@ -92,3 +99,54 @@ class ClipEditorTests(unittest.TestCase):
                     self.assertGreater(amplitude(500, 1.55, 1.7), .005)
                     self.assertLess(amplitude(880, .35, .48), .002)
                     self.assertGreater(amplitude(880, .83, .95), .01)
+
+    def test_numbered_copies_and_confirmed_replacement_keep_the_batch_and_rollback(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            folder = root / "Workshop_[original]"
+            folder.mkdir()
+            original = folder / "clip-01.mp4"
+            original.write_bytes(b"original data")
+            metadata = original.with_suffix(".json")
+            metadata.write_text(json.dumps({"title": "Workshop", "description": "Old posting copy", "copy_source": "ai",
+                                            "posting_context": "Original speech"}), encoding="utf-8")
+
+            def render(source, output, edit, music, progress):
+                output.write_bytes(b"new data")
+
+            with patch.multiple(app, OUTPUT_DIR=root, JOB_QUEUE=JobQueue(root / "queue.sqlite3"), render_edit=render), \
+                    patch.object(app, "inspect_media", return_value=(3, True)):
+                with TestClient(app.app) as client:
+                    route = "/api/edit/Workshop_[original]/"
+                    data = {"start": .4, "end": 2.4}
+                    for version in (2, 3):
+                        name = original.name if version == 2 else "clip-01-v2.mp4"
+                        response = client.post(route + name, json=data)
+                        self.assertEqual(response.status_code, 200, response.text)
+                        self.assertEqual(self.wait_for_job(client, response.json()["job_id"])["status"], "completed")
+                        self.assertTrue((folder / f"clip-01-v{version}.mp4").is_file())
+                    self.assertEqual(original.read_bytes(), b"original data")
+
+                    actual_replace = Path.replace
+
+                    def deny_media_commit(path, destination):
+                        if path.name == "edit.rendering":
+                            raise PermissionError("File is in use")
+                        return actual_replace(path, destination)
+
+                    with self.assertLogs("core.job_queue", level="ERROR"), patch.object(Path, "replace", deny_media_commit):
+                        response = client.post(route + original.name, json=data | {"save_mode": "replace"})
+                        self.assertEqual(self.wait_for_job(client, response.json()["job_id"])["status"], "failed")
+                    self.assertEqual(original.read_bytes(), b"original data")
+                    self.assertIn("Old posting copy", metadata.read_text(encoding="utf-8"))
+
+                    response = client.post(route + original.name, json=data | {"save_mode": "replace"})
+                    self.assertEqual(self.wait_for_job(client, response.json()["job_id"])["status"], "completed")
+                    self.assertEqual(original.read_bytes(), b"new data")
+                    updated = json.loads(metadata.read_text(encoding="utf-8"))
+                    self.assertEqual(updated["description"], "Old posting copy")
+                    self.assertTrue(updated["copy_needs_review"])
+                    self.assertNotIn("posting_context", updated)
+                    batch, = client.get("/api/library").json()["batches"]
+                    self.assertEqual([clip["filename"] for clip in batch["clips"]], ["clip-01.mp4", "clip-01-v2.mp4", "clip-01-v3.mp4"])
+                    self.assertEqual(client.post(route + original.name, json=data | {"source_revision": "1"}).status_code, 409)

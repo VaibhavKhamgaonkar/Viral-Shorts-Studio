@@ -62,7 +62,7 @@ Batches with more than five clips use a horizontal strip. Swipe, use the scrollb
 1. Click the pencil icon on the clip card. Set trim start and end in seconds, choose a color look, and adjust the center zoom or mirror. Use **Play** and the playhead slider to review the changes.
 2. Set separate volume levels for the original audio and a looping background track. Pick a track from your library or add audio you have permission to use. Set **Original** to 0% to mute the original soundtrack.
 3. Audition a built-in effect, then use **Add at playhead** to place it. Up to 12 cues can be timed and leveled independently. Cue times are measured from the start of the trim. The editor also shows the posting kit’s sound suggestion when one is saved.
-4. Choose **Export edited MP4**. The job runs in **Tasks** and adds an **Edited clip** batch to the library when ready. Each edit starts from the rendered MP4, including its burned-in captions. The original export stays in the library.
+4. Choose **Save as new version** to export a numbered copy such as `clip-01-v2.mp4` alongside the original. Choose **Replace existing file** and confirm if you want the edited MP4 to take its place. Follow the export in **Tasks**. Edits start from the rendered MP4, including its burned-in captions.
 
 For YouTube videos with usable captions, the studio scans the transcript in overlapping windows and asks yt-dlp for selected ranges. If a range request fails it can use a full download. Highlights depend on spoken content and the available transcript. Use an exact range for a moment you already know.
 

@@ -309,7 +309,7 @@ async function startJob(event) {
 
 function clipCard(clip, folder) {
     const clipPath = encodeURIComponent(folder) + "/" + encodeURIComponent(clip.filename);
-    const uri = "/clips/" + clipPath;
+    const uri = "/clips/" + clipPath + (clip.file_revision ? "?v=" + encodeURIComponent(clip.file_revision) : "");
     const card = element("article", "clip");
     const video = element("video");
     video.controls = true;
@@ -390,7 +390,7 @@ function batchCard(batch) {
             async () => {
                 await api("/api/delete_task/" + folder, {method: "POST"});
                 toast("Batch deleted.");
-                await Promise.all([loadTasks(), refreshQueueAfterRemoval(batch.task_id)]);
+                await Promise.all([loadTasks(), refreshQueueAfterRemoval(batch.task_id, true)]);
             }))
     );
     if (batch.clips.length > 5) {

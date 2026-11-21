@@ -8,6 +8,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Literal
 from urllib.parse import parse_qs, urlparse
 
@@ -25,7 +26,7 @@ from core.analyzer import generate_post_copy
 from core.clip_editor import ClipEdit, EFFECTS, effect_wave, render_edit
 from core.downloader import DOWNLOADS_DIR, clear_all_downloads_detailed, get_downloads_storage_info, sanitize_filename
 from core.job_queue import DuplicateJob, JobQueue
-from core.publisher import posting_metadata, read_caption_context, save_task_info, write_clip_metadata
+from core.publisher import posting_metadata, read_caption_context, write_clip_metadata
 from core.studio_pipeline import run_job
 from core.transformer import AUDIO_EXTENSIONS, MUSIC_DIR, OUTPUT_DIR, asset_files, inspect_media
 
@@ -263,7 +264,7 @@ def delete_task_endpoint(folder_name: str):
         folder = task_folder(folder_name)
         task_id = batch_task_id(folder, read_json(folder / "info.json"))
         shutil.rmtree(folder)
-        JOB_QUEUE.remove_finished(task_id)
+        JOB_QUEUE.remove_finished(task_id, include_batch=True)
         return {"status": "ok"}
 
 
@@ -336,13 +337,18 @@ def upload_video_endpoint(file: UploadFile = File(...)):
     return {"status": "ok", "file_path": str(dest), "filename": dest.name, "size_mb": round(size / 2**20, 2)}
 
 
+def clip_order(video):
+    version = re.fullmatch(r"(.+)-v(\d+)", video.stem)
+    return (version[1], int(version[2]), video.name) if version else (video.stem, 1, video.name)
+
+
 def export_batches():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     running = JOB_QUEUE.running_id()
     for entry in OUTPUT_DIR.iterdir():
         if running and entry.name.endswith(f"_[{running}]"):
             continue
-        videos = sorted(file for file in entry.glob("*.mp4") if not file.name.startswith(("source-", "slice_")))
+        videos = sorted((file for file in entry.glob("*.mp4") if not file.name.startswith(("source-", "slice_"))), key=clip_order)
         try:
             exported_at = max((video.stat().st_mtime for video in videos), default=None)
         except FileNotFoundError:
@@ -361,7 +367,11 @@ def export_batches():
 
 
 def exported_clip(video):
-    return {"title": video.stem} | read_json(video.with_suffix(".json")) | {"filename": video.name}
+    try:
+        revision = str(video.stat().st_mtime_ns)
+    except FileNotFoundError:
+        revision = ""
+    return {"title": video.stem} | read_json(video.with_suffix(".json")) | {"filename": video.name, "file_revision": revision}
 
 
 def public_clip(clip):
@@ -465,10 +475,13 @@ def refresh_posting_kit(folder_name: str, filename: str, request: PostingKitRequ
 
     try:
         output = video.with_suffix(".json")
+        revision = video.stat().st_mtime_ns
         metadata = read_json(output)
         info = read_json(folder / "info.json")
         label = info.get("source_title") or video.stem
-        context = metadata.get("posting_context") or read_caption_context(video.with_suffix(".ass"))
+        context = metadata.get("posting_context") or (
+            "" if metadata.get("selection") == "edited" else read_caption_context(video.with_suffix(".ass"))
+        )
         copy = generate_post_copy(
             {}, [], label, load_settings(), tuple(list_music()), excerpt=context, notes=request.notes,
         )
@@ -480,9 +493,12 @@ def refresh_posting_kit(folder_name: str, filename: str, request: PostingKitRequ
             raise HTTPException(502, "The new draft was incomplete. Your previous kit is still saved.")
 
         updated = metadata | posting_metadata(copy, label, metadata.get("source_url") or info.get("youtube_url", ""))
+        updated["copy_needs_review"] = False
         with JOB_QUEUE.gate:
             if not video.is_file():
                 raise HTTPException(404, "The clip was removed while the kit was generating.")
+            if video.stat().st_mtime_ns != revision:
+                raise HTTPException(409, "The clip changed while the kit was generating. Reopen it and try again.")
             write_clip_metadata(output, updated)
         updated.pop("posting_context", None)
         return updated | {"filename": video.name}
@@ -490,35 +506,65 @@ def refresh_posting_kit(folder_name: str, filename: str, request: PostingKitRequ
         POSTING_KIT_LOCK.release()
 
 
-def process_edit(job_id, payload, update):
+def next_clip_version(video, base_name):
+    pattern = re.compile(rf"{re.escape(base_name)}-v(\d+)", re.IGNORECASE)
+    versions = (int(match[1]) for file in video.parent.iterdir() if (match := pattern.fullmatch(file.stem)))
+    number = max(versions, default=1) + 1
+    return video.with_name(f"{base_name}-v{number}.mp4"), number
+
+
+def process_edit(payload, update):
     edit = ClipEdit.model_validate(payload)
     video = exported_video(payload["folder"], payload["filename"])
+    if edit.source_revision and str(video.stat().st_mtime_ns) != edit.source_revision:
+        raise ValueError("The original clip changed while this edit was queued. Reopen it and submit the edit again.")
     music = editor_music_file(edit.music_track) if edit.music_track else None
     source_info = read_json(video.parent / "info.json")
     source_url = source_info.get("youtube_url", "")
-    title = payload["title"]
-    folder = OUTPUT_DIR / f"{sanitize_filename(title)}_[{job_id}]"
-    folder.mkdir(exist_ok=False)
-    output = folder / "edited.mp4"
-    temporary = output.with_suffix(".rendering")
+    existing = exported_clip(video)
+    title = existing["title"]
+    base_title = existing.get("version_title") or title
+    base_name = existing.get("version_base") or video.stem
     duration = edit.end - edit.start
     detail = f"{duration:.2f} seconds · {len(edit.cues)} sound effects"
-    try:
+    with TemporaryDirectory(dir=video.parent) as scratch:
+        staging = Path(scratch)
+        temporary = staging / "edit.rendering"
         update("export", "Rendering edit", detail)
         render_edit(video, temporary, edit, music, lambda percent: update("export", "Rendering edit", detail, percent))
-        update("finalize", "Saving edited clip", "The edited MP4 will appear as a new batch.")
-        save_task_info(folder, job_id, source_url, title, duration=duration)
-        write_clip_metadata(output.with_suffix(".json"), {
-            "title": title, "video_file": output.name, "selection": "edited", "start_time": 0,
-            "end_time": duration, "source_url": source_url,
-            "edited_from": {"folder": video.parent.name, "filename": video.name},
-            "applied_music": edit.music_track if edit.music_level else "",
-        })
-        temporary.replace(output)
-    except Exception:
-        shutil.rmtree(folder)
-        raise
-    return 1
+        with JOB_QUEUE.gate:
+            if str(video.stat().st_mtime_ns) != existing["file_revision"]:
+                raise ValueError("The clip changed during rendering. Reopen it and try again.")
+            if edit.save_mode == "replace":
+                output = video
+            else:
+                output, version = next_clip_version(video, base_name)
+                title = f"{base_title} · v{version}"
+            update("finalize", "Saving edited clip", output.name)
+            sidecar = output.with_suffix(".json")
+            backup = staging / "previous.json"
+            if sidecar.exists():
+                shutil.copyfile(sidecar, backup)
+            retained = read_json(sidecar) if edit.save_mode == "replace" else {}
+            retained.pop("posting_context", None)
+            if retained.get("copy_source") == "ai":
+                retained["copy_needs_review"] = True
+            write_clip_metadata(sidecar, retained | {
+                "title": title, "video_file": output.name, "selection": "edited", "start_time": 0,
+                "end_time": duration, "source_url": source_url,
+                "edited_from": {"folder": video.parent.name, "filename": video.name},
+                "applied_music": edit.music_track if edit.music_level else "",
+                "version_base": base_name, "version_title": base_title,
+            })
+            try:
+                temporary.replace(output)
+            except OSError:
+                if backup.exists():
+                    backup.replace(sidecar)
+                else:
+                    sidecar.unlink(missing_ok=True)
+                raise
+    return 1, batch_task_id(video.parent, source_info)
 
 
 def process_job(job_id, payload, preferences):
@@ -536,7 +582,7 @@ def process_job(job_id, payload, preferences):
         last_report, last_update = report, now
 
     if payload["source_type"] == "edit":
-        return process_edit(job_id, payload, update)
+        return process_edit(payload, update)
 
     request = ClipRequest.model_validate(payload)
     settings = preferences | {"llm_api_key": load_settings()["llm_api_key"]}
@@ -591,6 +637,10 @@ def clip_job_identity(request, settings):
 def queue_clip_edit(folder_name: str, filename: str, edit: ClipEdit):
     with JOB_QUEUE.gate:
         video = exported_video(folder_name, filename)
+        revision = str(video.stat().st_mtime_ns)
+        if edit.source_revision and edit.source_revision != revision:
+            raise HTTPException(409, "This clip has changed. Refresh the library and open the editor again.")
+        edit.source_revision = revision
         try:
             duration, _ = inspect_media(video)
         except (av.error.FFmpegError, ValueError) as error:

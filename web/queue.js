@@ -129,7 +129,7 @@ function queueCard(job, historyOpen) {
     if (job.status === "completed" || job.status === "failed") {
         const actions = element("div", "queue-view");
         if (job.status === "completed" || libraryBatchIds.has(job.job_id)) {
-            const view = link("View clips", batchHref(job.job_id), "arrow");
+            const view = link("View clips", batchHref(job.result_batch_id || job.job_id), "arrow");
             view.dataset.queueControl = "view";
             view.addEventListener("click", () => {
                 tasksDrawer.close();
@@ -221,9 +221,9 @@ function refreshQueue() {
     return queueRequest;
 }
 
-async function refreshQueueAfterRemoval(jobId) {
+async function refreshQueueAfterRemoval(jobId, batchRemoved = false) {
     await queueRequest;
-    clearTaskFlash(jobId);
+    clearTaskFlash(jobId, batchRemoved);
     await refreshQueue();
 }
 

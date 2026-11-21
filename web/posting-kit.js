@@ -76,7 +76,9 @@ function renderKit(clip) {
     }
 
     const sections = [];
-    if (!clip.posting_kit_version || !clip.copy_ready) {
+    if (clip.copy_needs_review) {
+        sections.push(element("p", "kit-review", "This draft was written before the latest edit. Review it against the new clip or regenerate it."));
+    } else if (!clip.posting_kit_version || !clip.copy_ready) {
         const note = clip.posting_kit_version
             ? "This draft is missing some fields. Add clip context and regenerate to fill them in."
             : "This kit uses the earlier format. Regenerate for a fuller caption, topical hashtags, and engagement prompts.";

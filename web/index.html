@@ -367,6 +367,10 @@
     </div>
     <footer class="editor-footer">
         <p id="editor-status" class="form-message" role="status" hidden></p>
+        <div class="editor-save-options">
+            <label for="editor-save-mode">Save edited clip</label>
+            <select id="editor-save-mode" name="save_mode" form="editor-form"><option value="version">Save as new version</option><option value="replace">Replace existing file</option></select>
+        </div>
         <button id="editor-export" class="button button-primary" type="submit" form="editor-form" disabled><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg> Export edited MP4</button>
     </footer>
 </dialog>

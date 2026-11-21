@@ -43,6 +43,8 @@ class ClipEdit(BaseModel):
     music_track: str = Field(default="", max_length=255)
     music_level: int = Field(default=20, ge=0, le=100)
     cues: list[SoundCue] = Field(default_factory=list, max_length=12)
+    save_mode: Literal["version", "replace"] = "version"
+    source_revision: str = Field(default="", pattern=r"^\d{0,24}$")
 
     @model_validator(mode="after")
     def validate_range(self):

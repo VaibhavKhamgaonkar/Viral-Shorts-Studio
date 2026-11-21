@@ -213,7 +213,7 @@ function changeEditorTrack() {
 }
 
 async function openClipEditor(clip, path, uri) {
-    const session = editSession = {path, cues: []};
+    const session = editSession = {path, clip, cues: []};
     editorForm.reset();
     byId("editor-track").replaceChildren(new Option("No music", ""));
     byId("editor-effect").replaceChildren(new Option("Loading sounds…", ""));
@@ -344,7 +344,23 @@ byId("editor-add-effect").addEventListener("click", () => {
     scheduleEditorSounds();
 });
 
-editorForm.addEventListener("submit", async event => {
+async function submitEditorExport(session, edit) {
+    session.saving = true;
+    updateEditorTransport();
+    try {
+        const job = await api("/api/edit/" + session.path, jsonRequest("POST", edit));
+        if (editSession === session) editorDialog.close();
+        toast("Edited clip queued · #" + job.job_id);
+        trackSubmittedJob(job.job_id);
+    } catch (error) {
+        if (editSession === session) message("editor-status", error.message);
+    } finally {
+        session.saving = false;
+        if (editSession === session) updateEditorTransport();
+    }
+}
+
+editorForm.addEventListener("submit", event => {
     event.preventDefault();
     const session = editSession;
     const {start, end, valid} = editorRange();
@@ -358,21 +374,23 @@ editorForm.addEventListener("submit", async event => {
         start, end, zoom: Number(fields.get("zoom")), mirror: fields.has("mirror"), look: fields.get("look"),
         source_level: Number(fields.get("source_level")), music_track: fields.get("music_track"),
         music_level: Number(fields.get("music_level")),
+        save_mode: fields.get("save_mode"), source_revision: session.clip.file_revision || "",
         cues: session.cues.map(({effect, at, level}) => ({effect, at, level})),
     };
     editorVideo.pause();
-    session.saving = true;
-    updateEditorTransport();
-    try {
-        const job = await api("/api/edit/" + session.path, jsonRequest("POST", edit));
-        if (editSession === session) editorDialog.close();
-        toast("Edited clip queued · #" + job.job_id);
-        trackSubmittedJob(job.job_id);
-    } catch (error) {
-        if (editSession === session) message("editor-status", error.message);
-    } finally {
-        session.saving = false;
-        if (editSession === session) updateEditorTransport();
+    if (edit.save_mode === "replace") {
+        const cancel = action("Cancel", () => dialog.close());
+        const replace = action("Replace file", () => {
+            dialog.close();
+            submitEditorExport(session, edit);
+        }, null, "button-danger");
+        const buttons = element("div", "dialog-actions");
+        buttons.append(cancel, replace);
+        const detail = element("p", null, "This overwrites " + session.clip.filename + " after rendering succeeds.");
+        showDialog("Replace existing clip?", [detail, buttons]);
+        cancel.focus();
+    } else {
+        submitEditorExport(session, edit);
     }
 });
 

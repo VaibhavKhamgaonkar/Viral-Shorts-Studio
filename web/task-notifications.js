@@ -43,7 +43,7 @@ function showQueueFlash(jobs) {
 
     const link = byId("queue-flash-link");
     link.hidden = !ready;
-    if (ready) link.href = batchHref(result.job_id);
+    if (ready) link.href = batchHref(result.result_batch_id || result.job_id);
     byId("queue-flash-details").hidden = ready;
     byId("queue-flash-title").textContent = title;
     byId("queue-flash-detail").textContent = detail;
@@ -53,8 +53,8 @@ function showQueueFlash(jobs) {
     scheduleFlashDismissal();
 }
 
-function clearTaskFlash(jobId) {
-    const remaining = flashJobs.filter((job) => job.job_id !== jobId);
+function clearTaskFlash(jobId, batchRemoved) {
+    const remaining = flashJobs.filter((job) => job.job_id !== jobId && (!batchRemoved || job.result_batch_id !== jobId));
     if (remaining.length === flashJobs.length) return;
     if (remaining.length) showQueueFlash(remaining);
     else hideQueueFlash();

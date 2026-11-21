@@ -29,12 +29,13 @@ CREATE TABLE IF NOT EXISTS jobs (
     queued_at REAL,
     started_at REAL,
     updated_at REAL,
-    finished_at REAL
+    finished_at REAL,
+    result_batch_id TEXT
 )
 """
 
 PUBLIC_FIELDS = (
-    "job_id, source, status, phase, stage, detail, progress, activity, clip_count, queued_at, started_at, finished_at"
+    "job_id, source, status, phase, stage, detail, progress, activity, clip_count, queued_at, started_at, finished_at, result_batch_id"
 )
 
 
@@ -78,9 +79,10 @@ class JobQueue:
             with self._db() as db:
                 db.execute(SCHEMA)
                 columns = {column["name"] for column in db.execute("PRAGMA table_info(jobs)")}
-                for column in ("queued_at", "started_at", "updated_at"):
+                for column in ("queued_at", "started_at", "updated_at", "result_batch_id"):
                     if column not in columns:
-                        db.execute(f"ALTER TABLE jobs ADD COLUMN {column} REAL")
+                        column_type = "TEXT" if column == "result_batch_id" else "REAL"
+                        db.execute(f"ALTER TABLE jobs ADD COLUMN {column} {column_type}")
                 db.execute(
                     "UPDATE jobs SET status='failed', detail=?, progress=NULL, finished_at=COALESCE(updated_at, ?), request='{}', "
                     "settings='{}', source_file='' WHERE status='running'",
@@ -151,9 +153,10 @@ class JobQueue:
 
             job_id = job["job_id"]
             try:
-                count = processor(job_id, json.loads(job["request"]), json.loads(job["settings"]))
+                result = processor(job_id, json.loads(job["request"]), json.loads(job["settings"]))
+                count, batch_id = result if isinstance(result, tuple) else (result, None)
                 detail = f"{count} clip{'s' if count != 1 else ''} ready in the library."
-                self._finish(job_id, "completed", detail, count)
+                self._finish(job_id, "completed", detail, count, batch_id)
             except Exception as error:
                 logger.exception("Clip job %s failed", job_id)
                 self._finish(job_id, "failed", str(error) or type(error).__name__, 0)
@@ -174,12 +177,12 @@ class JobQueue:
                 (phase, stage, detail, progress, source, json.dumps(activity), now, job_id),
             )
 
-    def _finish(self, job_id, status, detail, count):
+    def _finish(self, job_id, status, detail, count, batch_id=None):
         with self._db() as db:
             db.execute(
-                "UPDATE jobs SET status=?, detail=?, progress=NULL, clip_count=?, finished_at=?, request='{}', "
+                "UPDATE jobs SET status=?, detail=?, progress=NULL, clip_count=?, finished_at=?, result_batch_id=?, request='{}', "
                 "settings='{}', source_file='' WHERE job_id=?",
-                (status, detail[:1200], count, time.time(), job_id),
+                (status, detail[:1200], count, time.time(), batch_id, job_id),
             )
 
     @staticmethod
@@ -209,11 +212,12 @@ class JobQueue:
             row = db.execute(f"SELECT {PUBLIC_FIELDS} FROM jobs WHERE job_id=?", (job_id,)).fetchone()
         return self._public(row) if row else None
 
-    def remove_finished(self, job_id):
+    def remove_finished(self, job_id, *, include_batch=False):
         """Remove history for a finished job. Active jobs stay in the queue."""
         with self._db() as db:
             return db.execute(
-                "DELETE FROM jobs WHERE job_id=? AND status IN ('completed','failed')", (job_id,)
+                "DELETE FROM jobs WHERE status IN ('completed','failed') AND (job_id=? OR result_batch_id=?)",
+                (job_id, job_id if include_batch else None),
             ).rowcount > 0
 
     def has_work(self):
