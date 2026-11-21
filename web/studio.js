@@ -320,20 +320,21 @@ function clipCard(clip, folder) {
     const body = element("div", "clip-body");
     body.append(element("strong", "clip-title", clip.title));
     if (Number.isFinite(clip.start_time) && Number.isFinite(clip.end_time)) {
-        const labels = {ai: "AI highlight", timeline: "Timeline pick", manual: "Exact range"};
+        const labels = {ai: "AI highlight", timeline: "Timeline pick", manual: "Exact range", edited: "Edited clip"};
         const range = formatTime(clip.start_time) + " – " + formatTime(clip.end_time);
         body.append(element("p", "clip-time", range + (labels[clip.selection] ? " · " + labels[clip.selection] : "")));
     }
     body.append(element("code", "clip-filename", clip.filename));
     const actions = element("div", "clip-actions");
     const kit = action("", (event) => openPostingKit(clip, folder, event.currentTarget), "copy");
+    const edit = action("", () => openClipEditor(clip, clipPath, uri), "edit");
     const download = link("", uri, "download");
     download.download = clip.filename;
     const reveal = action("", async () => {
         try { await api("/api/reveal_clip/" + clipPath, {method: "POST"}); }
         catch (error) { toast(error.message); }
     }, "folder");
-    for (const [control, label] of [[kit, "AI posting kit"], [download, "Download MP4"], [reveal, "Show in folder"]]) {
+    for (const [control, label] of [[edit, "Edit clip"], [kit, "AI posting kit"], [download, "Download MP4"], [reveal, "Show in folder"]]) {
         control.dataset.tooltip = label;
         control.setAttribute("aria-label", label + " · " + clip.filename);
         actions.append(control);

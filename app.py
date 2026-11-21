@@ -15,18 +15,19 @@ import av
 import requests
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
 
 from config.settings import load_settings, save_settings
 from config.studio import Layout, StudioSettings, studio_settings
 from core.analyzer import generate_post_copy
+from core.clip_editor import ClipEdit, EFFECTS, effect_wave, render_edit
 from core.downloader import DOWNLOADS_DIR, clear_all_downloads_detailed, get_downloads_storage_info, sanitize_filename
 from core.job_queue import DuplicateJob, JobQueue
-from core.publisher import posting_metadata, read_caption_context, write_clip_metadata
+from core.publisher import posting_metadata, read_caption_context, save_task_info, write_clip_metadata
 from core.studio_pipeline import run_job
-from core.transformer import AUDIO_EXTENSIONS, MUSIC_DIR, OUTPUT_DIR, asset_files
+from core.transformer import AUDIO_EXTENSIONS, MUSIC_DIR, OUTPUT_DIR, asset_files, inspect_media
 
 BASE_DIR = Path(__file__).resolve().parent
 WEB_DIR = BASE_DIR / "web"
@@ -159,6 +160,33 @@ def update_settings(preferences: StudioSettings):
 @app.get("/api/music")
 def list_music():
     return [file.name for file in asset_files(MUSIC_DIR, AUDIO_EXTENSIONS)]
+
+
+def editor_music_file(filename):
+    path = (MUSIC_DIR / filename).resolve()
+    if path.parent != MUSIC_DIR.resolve() or path.name != filename or path.suffix.lower() not in AUDIO_EXTENSIONS or not path.is_file():
+        raise HTTPException(404, "That track is unavailable in your music library.")
+    return path
+
+
+@app.get("/api/editor-assets")
+def editor_assets():
+    return {
+        "music": list_music(),
+        "effects": [{"id": name, "label": settings[0], "duration": settings[1]} for name, settings in EFFECTS.items()],
+    }
+
+
+@app.get("/api/editor-effects/{name}")
+def editor_effect(name: str):
+    if name not in EFFECTS:
+        raise HTTPException(404, "Sound effect not found.")
+    return Response(effect_wave(name), media_type="audio/wav", headers={"Cache-Control": "max-age=3600"})
+
+
+@app.get("/api/editor-music/{filename}")
+def editor_music(filename: str):
+    return FileResponse(editor_music_file(filename))
 
 
 @app.post("/api/music")
@@ -356,7 +384,7 @@ def search_library(
     size: int = Query(default=3, ge=1, le=12),
     sort: Literal["newest", "oldest", "title"] = "newest",
     source: Literal["", "youtube", "upload"] = "",
-    selection: Literal["", "ai", "timeline", "manual"] = "",
+    selection: Literal["", "ai", "timeline", "manual", "edited"] = "",
     after: int | None = None,
     before: int | None = None,
     focus: str = Query(default="", max_length=260),
@@ -462,9 +490,38 @@ def refresh_posting_kit(folder_name: str, filename: str, request: PostingKitRequ
         POSTING_KIT_LOCK.release()
 
 
+def process_edit(job_id, payload, update):
+    edit = ClipEdit.model_validate(payload)
+    video = exported_video(payload["folder"], payload["filename"])
+    music = editor_music_file(edit.music_track) if edit.music_track else None
+    source_info = read_json(video.parent / "info.json")
+    source_url = source_info.get("youtube_url", "")
+    title = payload["title"]
+    folder = OUTPUT_DIR / f"{sanitize_filename(title)}_[{job_id}]"
+    folder.mkdir(exist_ok=False)
+    output = folder / "edited.mp4"
+    temporary = output.with_suffix(".rendering")
+    duration = edit.end - edit.start
+    detail = f"{duration:.2f} seconds · {len(edit.cues)} sound effects"
+    try:
+        update("export", "Rendering edit", detail)
+        render_edit(video, temporary, edit, music, lambda percent: update("export", "Rendering edit", detail, percent))
+        update("finalize", "Saving edited clip", "The edited MP4 will appear as a new batch.")
+        save_task_info(folder, job_id, source_url, title, duration=duration)
+        write_clip_metadata(output.with_suffix(".json"), {
+            "title": title, "video_file": output.name, "selection": "edited", "start_time": 0,
+            "end_time": duration, "source_url": source_url,
+            "edited_from": {"folder": video.parent.name, "filename": video.name},
+            "applied_music": edit.music_track if edit.music_level else "",
+        })
+        temporary.replace(output)
+    except Exception:
+        shutil.rmtree(folder)
+        raise
+    return 1
+
+
 def process_job(job_id, payload, preferences):
-    request = ClipRequest.model_validate(payload)
-    settings = preferences | {"llm_api_key": load_settings()["llm_api_key"]}
     last_report = None
     last_update = 0
 
@@ -477,6 +534,12 @@ def process_job(job_id, payload, preferences):
             return
         JOB_QUEUE.report(job_id, phase, stage, detail, progress, source)
         last_report, last_update = report, now
+
+    if payload["source_type"] == "edit":
+        return process_edit(job_id, payload, update)
+
+    request = ClipRequest.model_validate(payload)
+    settings = preferences | {"llm_api_key": load_settings()["llm_api_key"]}
 
     def cleanup(paths):
         with JOB_QUEUE.gate:
@@ -492,6 +555,8 @@ def process_job(job_id, payload, preferences):
 
 
 def clip_job_identity(request, settings):
+    if request["source_type"] == "edit":
+        return "edit", request, {}
     if request["source_type"] == "url":
         url = urlparse(request["url"])
         route = url.path.strip("/").split("/")
@@ -520,6 +585,31 @@ def clip_job_identity(request, settings):
     else:
         options["length"] = request.get("clip_length")
     return source, options, settings
+
+
+@app.post("/api/edit/{folder_name}/{filename}")
+def queue_clip_edit(folder_name: str, filename: str, edit: ClipEdit):
+    with JOB_QUEUE.gate:
+        video = exported_video(folder_name, filename)
+        try:
+            duration, _ = inspect_media(video)
+        except (av.error.FFmpegError, ValueError) as error:
+            raise HTTPException(422, "Could not read the exported video.") from error
+        if edit.end > duration + .12 or duration - edit.start < .24:
+            raise HTTPException(422, "The trim range is outside the exported video.")
+        edit.end = min(edit.end, duration)
+        if any(cue.at >= edit.end - edit.start for cue in edit.cues):
+            raise HTTPException(422, "Move sound effects inside the trim range.")
+        if edit.music_track:
+            editor_music_file(edit.music_track)
+        title = read_json(video.with_suffix(".json")).get("title") or video.stem
+        title = str(title).removesuffix(" · Edited") + " · Edited"
+        payload = edit.model_dump() | {"folder": video.parent.name, "filename": video.name, "source_type": "edit", "title": title}
+        try:
+            job_id = JOB_QUEUE.submit(title, payload, {}, identity=clip_job_identity)
+        except DuplicateJob as error:
+            return {"job_id": error.job_id, "duplicate": True}
+    return {"job_id": job_id}
 
 
 @app.post("/api/generate")

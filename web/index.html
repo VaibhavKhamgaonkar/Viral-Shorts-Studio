@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="/studio/studio.css">
     <script src="/studio/studio.js" defer></script>
     <script src="/studio/posting-kit.js" defer></script>
+    <script src="/studio/clip-editor.js" defer></script>
     <script src="/studio/task-notifications.js" defer></script>
     <script src="/studio/queue.js" defer></script>
 </head>
@@ -29,6 +30,7 @@
     <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 16v4h16v-4"/></symbol>
     <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
     <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 4H6a2 2 0 0 0-2 2v10"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="m14 5 5 5M4 20l5-1L20 8l-4-4L5 15l-1 5Z"/></symbol>
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 5 5"/></symbol>
     <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
     <symbol id="i-music" viewBox="0 0 24 24"><path d="M9 17V5l10-2v12M9 8l10-2"/><ellipse cx="6" cy="17" rx="3" ry="2.5"/><ellipse cx="16" cy="15" rx="3" ry="2.5"/></symbol>
@@ -167,7 +169,7 @@
                                 <legend>Clip details</legend>
                                 <div class="library-field-pair">
                                     <div class="field"><label for="library-source">Source</label><select id="library-source" name="source"><option value="">All sources</option><option value="youtube">YouTube</option><option value="upload">Local upload</option></select></div>
-                                    <div class="field"><label for="library-selection">Clip selection</label><select id="library-selection" name="selection"><option value="">All selections</option><option value="ai">AI highlight</option><option value="timeline">Timeline pick</option><option value="manual">Exact range</option></select></div>
+                                    <div class="field"><label for="library-selection">Clip selection</label><select id="library-selection" name="selection"><option value="">All selections</option><option value="ai">AI highlight</option><option value="timeline">Timeline pick</option><option value="manual">Exact range</option><option value="edited">Edited clip</option></select></div>
                                 </div>
                             </fieldset>
                             <fieldset class="library-filter-group library-export-times">
@@ -306,6 +308,66 @@
             <button id="kit-refresh" class="button button-outline" type="button"><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg><span>Regenerate draft</span></button>
             <button id="kit-copy-post" class="button button-primary" type="button" hidden><svg class="icon" aria-hidden="true"><use href="#i-copy"/></svg>Copy post</button>
         </div>
+    </footer>
+</dialog>
+<dialog id="clip-editor" class="clip-editor" aria-labelledby="editor-title">
+    <header class="editor-header">
+        <div><h2 id="editor-title">Edit clip</h2><p id="editor-source"></p></div>
+        <form method="dialog"><button class="button button-outline icon-button" aria-label="Close editor"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></form>
+    </header>
+    <div class="editor-workspace">
+        <section class="editor-preview panel-plum" aria-labelledby="editor-preview-title">
+            <h3 id="editor-preview-title">Live preview</h3>
+            <div class="editor-frame"><video id="editor-video" playsinline preload="metadata" aria-label="Clip preview"></video></div>
+            <div class="editor-transport">
+                <button id="editor-play" class="button button-outline" type="button" disabled>Play</button>
+                <input id="editor-seek" type="range" value="0" min="0" max="1" step=".01" aria-label="Preview position" disabled>
+                <span id="editor-time">0:00 / 0:00</span>
+            </div>
+        </section>
+        <form id="editor-form" class="editor-controls">
+            <section class="editor-group">
+                <h3>Trim &amp; picture</h3>
+                <div class="editor-fields">
+                    <div class="field"><label for="editor-start">Start (sec)</label><input id="editor-start" name="start" type="number" min="0" step=".01" value="0" required></div>
+                    <div class="field"><label for="editor-end">End (sec)</label><input id="editor-end" name="end" type="number" min=".24" step=".01" required></div>
+                    <div class="field"><label for="editor-look">Color look</label><select id="editor-look" name="look"><option value="original">Original</option><option value="vivid">Vivid</option><option value="monochrome">Black and white</option></select></div>
+                    <div class="field"><label for="editor-zoom">Center zoom <output for="editor-zoom" id="editor-zoom-value">100%</output></label><input id="editor-zoom" name="zoom" type="range" min="100" max="150" value="100"></div>
+                </div>
+                <label class="check"><input id="editor-mirror" name="mirror" type="checkbox"> Mirror horizontally</label>
+            </section>
+            <section class="editor-group">
+                <h3>Audio mix</h3>
+                <div class="editor-fields">
+                    <div class="field"><label for="editor-source-level">Original <output id="editor-source-level-value" for="editor-source-level">100%</output></label><input id="editor-source-level" name="source_level" type="range" min="0" max="100" value="100"></div>
+                    <div class="field"><label for="editor-music-level">Music <output id="editor-music-level-value" for="editor-music-level">20%</output></label><input id="editor-music-level" name="music_level" type="range" min="0" max="100" value="20"></div>
+                </div>
+                <div class="field">
+                    <label for="editor-track">Background track</label>
+                    <div class="editor-track-row">
+                        <select id="editor-track" name="music_track"><option value="">No music</option></select>
+                        <button id="editor-add-track" class="button button-outline" type="button">Add track</button>
+                        <input id="editor-track-file" type="file" accept=".mp3,.wav,.m4a,.aac,.flac,.ogg" hidden>
+                    </div>
+                </div>
+            </section>
+            <section class="editor-group">
+                <h3>Sound effects</h3>
+                <div class="editor-effect-row">
+                    <label for="editor-effect" class="sr-only">Sound effect</label>
+                    <select id="editor-effect"><option value="">Loading sounds…</option></select>
+                    <button id="editor-hear-effect" class="button button-outline" type="button" disabled>Audition</button>
+                    <button id="editor-add-effect" class="button button-outline" type="button" disabled>Add at playhead</button>
+                </div>
+                <p class="editor-hint">Cue times are in seconds from the start of the trimmed clip.</p>
+                <p id="editor-sound-note" class="editor-hint" hidden></p>
+                <div id="editor-cues" class="editor-cues"></div>
+            </section>
+        </form>
+    </div>
+    <footer class="editor-footer">
+        <p id="editor-status" class="form-message" role="status" hidden></p>
+        <button id="editor-export" class="button button-primary" type="submit" form="editor-form" disabled><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg> Export edited MP4</button>
     </footer>
 </dialog>
 <dialog id="detail-dialog" aria-labelledby="dialog-title">
