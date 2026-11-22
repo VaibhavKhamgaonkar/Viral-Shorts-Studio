@@ -86,6 +86,12 @@ class RemovedRange(BaseModel):
     end: float = Field(gt=0, allow_inf_nan=False)
 
 
+class AudioRegion(RemovedRange):
+    source_level: int = Field(default=0, ge=0, le=100)
+    asset: str = Field(default="", max_length=200)
+    level: int = Field(default=100, ge=0, le=100)
+
+
 @dataclass(frozen=True)
 class InsertAsset:
     duration: float
@@ -98,6 +104,7 @@ class ClipEdit(PictureSettings):
     end: float = Field(gt=0, allow_inf_nan=False)
     ranges: list[PictureRange] = Field(default_factory=list, max_length=8)
     cuts: list[RemovedRange] = Field(default_factory=list, max_length=12)
+    audio_regions: list[AudioRegion] = Field(default_factory=list, max_length=12)
     cut_fade: bool = False
     titles: list[TextCue] = Field(default_factory=list, max_length=8)
     inserts: list[InsertCue] = Field(default_factory=list, max_length=4)
@@ -110,6 +117,9 @@ class ClipEdit(PictureSettings):
     music_fade_out: float = Field(default=0, ge=0, le=3, allow_inf_nan=False)
     duck_music: bool = False
     clean_voice: bool = False
+    reduce_rumble: bool = False
+    reduce_hiss: bool = False
+    hum_filter: Literal[0, 50, 60] = 0
     cues: list[SoundCue] = Field(default_factory=list, max_length=12)
     save_mode: Literal["version", "replace"] = "version"
     source_revision: str = Field(default="", pattern=r"^\d{0,24}$")
@@ -142,6 +152,11 @@ def validate_timeline(edit, duration):
         cursor = cut.end
     if duration - removed < .24:
         raise ValueError("Keep at least 0.24 seconds of video after removing sections.")
+    cursor = 0
+    for region in sorted(edit.audio_regions, key=lambda item: item.at):
+        if region.at < cursor or region.end - region.at < .049 or region.end > duration + .005:
+            raise ValueError("Timed audio must be at least 0.05 seconds, inside the trim, and cannot overlap.")
+        cursor = region.end
     cursor = 0
     for picture in sorted(edit.ranges, key=lambda item: item.at):
         if picture.end <= picture.at or picture.end > duration + .002:
@@ -199,7 +214,7 @@ def effect_wave(name):
     return buffer.getvalue()
 
 
-def render_edit(video, output, edit, music, progress, *, inserts=None, preview=False):
+def render_edit(video, output, edit, music, progress, *, inserts=None, voiceovers=None, preview=False):
     with av.open(str(video)) as container:
         stream = container.streams.video[0]
         width, height = stream.width, stream.height
@@ -233,8 +248,27 @@ def render_edit(video, output, edit, music, progress, *, inserts=None, preview=F
         audio.append(f"[{label}]")
 
     if has_audio and edit.source_level:
-        cleanup = ",highpass=f=75,afftdn=nr=9:nf=-40" if edit.clean_voice else ""
-        add_audio(0, edit.source_level, effects=cleanup)
+        cleanup = []
+        if edit.clean_voice or edit.reduce_rumble:
+            cleanup.append(f"highpass=f={110 if edit.reduce_rumble else 75}")
+        if edit.reduce_hiss:
+            cleanup.append("lowpass=f=6000")
+        if edit.hum_filter:
+            cleanup.extend(f"equalizer=f={edit.hum_filter * harmonic}:width_type=h:width=12:g=-22" for harmonic in (1, 2, 3))
+        if edit.clean_voice:
+            cleanup.append("afftdn=nr=9:nf=-40")
+        gain = "1"
+        for region in reversed(sorted(edit.audio_regions, key=lambda item: item.at)):
+            if region.source_level == 100:
+                continue
+            at = f"{region.at:.6f}"
+            end = f"{region.end:.6f}"
+            fade = min(.015, (region.end - region.at) / 3)
+            attenuation = 1 - region.source_level / 100
+            envelope = f"1-{attenuation:.6f}*max(0,min(1,min((t-{at})/{fade:.6f},({end}-t)/{fade:.6f})))"
+            gain = f"if(lt(t,{at}),1,if(lt(t,{end}),{envelope},{gain}))"
+        suppression = f",asetnsamples=n=256:p=0,volume='{gain}':eval=frame" if gain != "1" else ""
+        add_audio(0, edit.source_level, effects="".join("," + item for item in cleanup) + suppression)
     music_index = add_input(music, "-stream_loop", "-1", "-t", str(final_duration)) if music and edit.music_level else None
     with TemporaryDirectory(dir=output.parent) as scratch:
         scratch = Path(scratch)
@@ -245,6 +279,13 @@ def render_edit(video, output, edit, music, progress, *, inserts=None, preview=F
             if not path.exists():
                 path.write_bytes(effect_wave(cue.effect))
             add_audio(add_input(path), cue.level, round(cue.at * 1000))
+        for region in edit.audio_regions:
+            if region.asset and region.level:
+                path, audio_length = voiceovers[region.asset]
+                length = min(region.end - region.at, audio_length)
+                fade = min(.02, length / 4)
+                taper = f",atrim=duration={length:.6f},afade=t=out:st={length - fade:.6f}:d={fade:.6f}"
+                add_audio(add_input(path), region.level, round(region.at * 1000), effects=taper)
         graphics = []
         if edit.titles:
             write_editor_titles(scratch / "titles.ass", edit.titles, out_width, out_height)

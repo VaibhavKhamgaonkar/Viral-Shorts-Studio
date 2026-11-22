@@ -13,6 +13,7 @@
     <script src="/studio/editor-visuals.js" defer></script>
     <script src="/studio/editor-timeline.js" defer></script>
     <script src="/studio/editor-tools.js" defer></script>
+    <script src="/studio/editor-audio.js" defer></script>
     <script src="/studio/task-notifications.js" defer></script>
     <script src="/studio/queue.js" defer></script>
 </head>
@@ -510,28 +511,85 @@
             </div>
             <div id="editor-panel-audio" role="tabpanel" aria-labelledby="editor-tab-audio" hidden>
             <section class="editor-group">
-                <h3>Source and music</h3>
-                <div class="editor-fields">
-                    <div class="field"><label for="editor-source-level">Original <output id="editor-source-level-value" for="editor-source-level">100%</output></label><input id="editor-source-level" name="source_level" type="range" min="0" max="100" value="100"></div>
-                    <div class="field"><label for="editor-music-level">Music <output id="editor-music-level-value" for="editor-music-level">20%</output></label><input id="editor-music-level" name="music_level" type="range" min="0" max="100" value="20"></div>
-                </div>
+                <h3>Original audio</h3>
+                <div class="field"><label for="editor-source-level">Volume <output id="editor-source-level-value" for="editor-source-level">100%</output></label><input id="editor-source-level" name="source_level" type="range" min="0" max="100" value="100"></div>
+                <details class="editor-disclosure editor-audio-filters">
+                    <summary>Audio filters</summary>
+                    <label class="check"><input type="checkbox" name="clean_voice"> Reduce steady background noise</label>
+                    <label class="check"><input type="checkbox" name="reduce_rumble"> Reduce low rumble</label>
+                    <label class="check"><input type="checkbox" name="reduce_hiss"> Reduce high hiss</label>
+                    <div class="field"><label for="editor-hum-filter">Electrical hum</label><select id="editor-hum-filter" name="hum_filter"><option value="0">Off</option><option value="50">50 Hz</option><option value="60">60 Hz</option></select></div>
+                    <p class="editor-hint">Play rendered edit to hear the filters.</p>
+                </details>
+            </section>
+            <section class="editor-group">
+                <h3>Background music</h3>
                 <div class="field">
                     <label for="editor-track">Background track</label>
                     <div class="editor-track-row">
                         <select id="editor-track" name="music_track"><option value="">No music</option></select>
-                        <button id="editor-add-track" class="button button-outline" type="button">Add track</button>
+                        <button id="editor-add-track" class="button button-outline" type="button">Import track</button>
                         <input id="editor-track-file" type="file" accept=".mp3,.wav,.m4a,.aac,.flac,.ogg" hidden>
                     </div>
                 </div>
+                <p id="editor-music-empty" class="editor-hint">Choose a track or import an audio file to set its volume and fades.</p>
                 <div id="editor-music-options" hidden>
+                    <div class="field"><label for="editor-music-level">Music volume <output id="editor-music-level-value" for="editor-music-level">20%</output></label><input id="editor-music-level" name="music_level" type="range" min="0" max="100" value="20"></div>
                     <div class="editor-fields">
                         <div class="field"><label for="editor-music-fade-in">Music fade in</label><select id="editor-music-fade-in" name="music_fade_in"><option value="0">Off</option><option value=".25">0.25 sec</option><option value=".5">0.5 sec</option><option value="1">1 sec</option><option value="2">2 sec</option></select></div>
                         <div class="field"><label for="editor-music-fade-out">Music fade out</label><select id="editor-music-fade-out" name="music_fade_out"><option value="0">Off</option><option value=".25">0.25 sec</option><option value=".5">0.5 sec</option><option value="1">1 sec</option><option value="2">2 sec</option></select></div>
                     </div>
                     <label class="check"><input type="checkbox" name="duck_music"> Lower music under foreground audio</label>
                 </div>
-                <label class="check"><input type="checkbox" name="clean_voice"> Reduce steady background noise</label>
-                <p class="editor-hint">Use Play rendered edit to hear noise reduction and automatic music levels.</p>
+            </section>
+            <section class="editor-group">
+                <h3>Timed audio</h3>
+                <p class="editor-hint">Mute or lower the original for a section and add a recording or voice-over. Times are measured from the start of the trim.</p>
+                <div class="editor-fields">
+                    <div class="field"><label for="editor-audio-at">Start (sec)</label><input id="editor-audio-at" type="number" min="0" step="any" value="0"><button id="editor-audio-mark-start" class="button button-plain" type="button">Start at playhead</button></div>
+                    <div class="field"><label for="editor-audio-end">End (sec)</label><input id="editor-audio-end" type="number" min="0" step="any"><button id="editor-audio-mark-end" class="button button-plain" type="button">End at playhead</button></div>
+                    <div class="field"><label for="editor-audio-source-level">Original in this range <output id="editor-audio-source-value">0%</output></label><input id="editor-audio-source-level" type="range" min="0" max="100" value="0"></div>
+                    <div class="field" id="editor-voice-level-field" hidden><label for="editor-voice-level">New audio level <output id="editor-voice-value">100%</output></label><input id="editor-voice-level" type="range" min="0" max="100" value="100"></div>
+                </div>
+                <div class="field">
+                    <label for="editor-voiceover">New audio</label>
+                    <div class="editor-track-row">
+                        <select id="editor-voiceover"><option value="">None · adjust original only</option></select>
+                        <button class="button button-outline" id="editor-import-voice" type="button">Import audio</button>
+                        <input id="editor-voice-file" type="file" accept=".mp3,.wav,.m4a,.aac,.flac,.ogg" hidden>
+                    </div>
+                </div>
+                <audio id="editor-voice-audition" controls preload="none" aria-label="Audition new audio" hidden></audio>
+                <button class="button button-plain" id="editor-audio-fit" type="button" hidden>Fit range to audio</button>
+                <details id="editor-voice-synthesis" class="editor-disclosure editor-voice-tool">
+                    <summary>Generate voice-over</summary>
+                    <p class="editor-hint" id="editor-voice-help">Uses voices installed on this Windows PC.</p>
+                    <div class="field"><label for="editor-voice-text">Voice-over script</label><textarea id="editor-voice-text" rows="2" maxlength="850"></textarea></div>
+                    <div class="editor-fields">
+                        <div class="field"><label for="editor-voice-choice">Voice</label><select id="editor-voice-choice"><option value="">Windows default</option></select></div>
+                        <div class="field"><label for="editor-voice-rate">Speaking pace</label><select id="editor-voice-rate"><option value="-2">Slower</option><option value="0" selected>Normal</option><option value="2">Faster</option></select></div>
+                    </div>
+                    <button id="editor-generate-voice" class="button button-outline" type="button">Generate audio</button>
+                </details>
+                <details class="editor-disclosure editor-voice-tool">
+                    <summary>Separate voice and background</summary>
+                    <p class="editor-hint">Creates separate voice and background tracks for this range. Audition the track you want to keep, then apply it in place of the original mix.</p>
+                    <div class="editor-reaction-actions">
+                        <button id="editor-separate-audio" class="button button-outline" type="button">Separate selected range</button>
+                        <a id="editor-separator-setup" class="button button-plain" href="https://github.com/VaibhavKhamgaonkar/Viral-Shorts-Studio#audio-editing" target="_blank" rel="noopener noreferrer">Setup instructions</a>
+                    </div>
+                    <div id="editor-separated-tracks" class="editor-reaction-actions" hidden>
+                        <button id="editor-keep-voice" class="button button-outline" type="button">Use voice only</button>
+                        <button id="editor-keep-background" class="button button-outline" type="button">Use background only</button>
+                    </div>
+                    <p id="editor-separator-status" class="editor-hint" role="status"></p>
+                </details>
+                <div class="editor-reaction-actions">
+                    <button id="editor-save-audio" class="button button-primary" type="button">Apply audio to range</button>
+                    <button id="editor-cancel-audio" class="button button-plain" type="button" hidden>Cancel range edit</button>
+                </div>
+                <p id="editor-audio-status" class="editor-hint" role="status"></p>
+                <div class="editor-visual-cues" id="editor-audio-regions"></div>
             </section>
             <section class="editor-group">
                 <h3>Sound effects</h3>

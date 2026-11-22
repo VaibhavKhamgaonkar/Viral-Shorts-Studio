@@ -89,9 +89,21 @@ function updateEditorLevels() {
     byId("editor-source-level-value").textContent = source + "%";
     byId("editor-music-level-value").textContent = music + "%";
     if (editorAudio) {
-        editorAudio.source.gain.value = source / 100;
+        updateOriginalGain();
         editorAudio.music.gain.value = music / 100;
     }
+}
+
+function updateOriginalGain() {
+    if (!editorAudio) return;
+    const original = byId("editor-source-level").valueAsNumber / 100;
+    const reduction = (currentAudioRegion()?.source_level ?? 100) / 100;
+    const target = original * reduction;
+    if (editorAudio.sourceTarget === target) return;
+    editorAudio.sourceTarget = target;
+    const {context, source} = editorAudio;
+    source.gain.cancelScheduledValues(context.currentTime);
+    source.gain.setTargetAtTime(target, context.currentTime, .006);
 }
 
 function stopCues() {
@@ -100,18 +112,22 @@ function stopCues() {
     cueVoices = [];
 }
 
-function getEffectBuffer(effect) {
-    if (!soundBuffers.has(effect)) {
-        const pending = fetch("/api/editor-effects/" + encodeURIComponent(effect)).then(response => {
-            if (!response.ok) throw new Error("Could not load the sound effect.");
+function getAudioBuffer(url) {
+    if (!soundBuffers.has(url)) {
+        const pending = fetch(url).then(response => {
+            if (!response.ok) throw new Error("Could not load that audio clip.");
             return response.arrayBuffer();
         }).then(bytes => editorAudio.context.decodeAudioData(bytes)).catch(error => {
-            soundBuffers.delete(effect);
+            soundBuffers.delete(url);
             throw error;
         });
-        soundBuffers.set(effect, pending);
+        soundBuffers.set(url, pending);
     }
-    return soundBuffers.get(effect);
+    return soundBuffers.get(url);
+}
+
+function effectUrl(effect) {
+    return "/api/editor-effects/" + encodeURIComponent(effect);
 }
 
 function playEditorSound(buffer, level, when, offset = 0, duration = buffer.duration - offset) {
@@ -140,16 +156,20 @@ async function scheduleEditorSounds() {
     const {start, end, valid} = editorRange();
     if (!valid || !editorAudio || !editorIsPlaying()) return;
     const schedule = cueSchedule;
-    const cues = editSession.cues.filter(cue => cue.level && cue.at >= 0 && cue.at < end - start);
+    const elapsed = editorVideo.currentTime - start;
+    const cues = [
+        ...editSession.cues.map(cue => ({...cue, url: effectUrl(cue.effect), end: end - start})),
+        ...editSession.audioRegions.filter(cue => cue.asset).map(cue => ({...cue, url: voiceoverUrl(cue.asset)})),
+    ].filter(cue => cue.level && cue.at >= 0 && cue.at < end - start && cue.end > elapsed);
     try {
-        const buffers = await Promise.all(cues.map(cue => getEffectBuffer(cue.effect)));
+        const buffers = await Promise.all(cues.map(cue => getAudioBuffer(cue.url)));
         if (schedule !== cueSchedule || !editorIsPlaying()) return;
         const elapsed = editorVideo.currentTime - start;
         const now = editorAudio.context.currentTime;
         for (const [index, cue] of cues.entries()) {
             const delay = cue.at - elapsed;
             const offset = Math.max(0, -delay);
-            const duration = Math.min(buffers[index].duration - offset, end - start - Math.max(cue.at, elapsed));
+            const duration = Math.min(buffers[index].duration - offset, Math.min(end - start, cue.end) - Math.max(cue.at, elapsed));
             if (duration > 0) cueVoices.push(playEditorSound(buffers[index], cue.level, now + Math.max(0, delay), offset, duration));
         }
     } catch (error) {
@@ -173,6 +193,7 @@ function stopEditorMix() {
 function tickEditorPreview() {
     cancelAnimationFrame(previewFrame);
     updateEditorTransport();
+    updateOriginalGain();
     if (!editorIsPlaying()) return;
     const {end, valid} = editorRange();
     const removed = cutAtSourceTime();
@@ -228,6 +249,7 @@ function renderEditorCues() {
 function changeEditorTrack() {
     const filename = byId("editor-track").value;
     byId("editor-music-options").hidden = !filename;
+    byId("editor-music-empty").hidden = Boolean(filename);
     byId("editor-music-level").disabled = !filename;
     editorMusic.pause();
     if (filename) editorMusic.src = "/api/editor-music/" + encodeURIComponent(filename);
@@ -236,10 +258,12 @@ function changeEditorTrack() {
 }
 
 async function openClipEditor(clip, path, uri) {
-    const session = editSession = {path, clip, cues: [], titles: [], inserts: [], captions: [], ranges: [], cuts: [], splits: [], fps: 30, looks: new Map(), insertAssets: new Map()};
+    const session = editSession = {path, clip, cues: [], titles: [], inserts: [], captions: [], ranges: [], cuts: [], splits: [],
+        audioRegions: [], voiceovers: new Map(), fps: 30, looks: new Map(), insertAssets: new Map()};
     editorForm.reset();
     resetEditorVisuals();
     resetEditorTools();
+    resetEditorAudioTools();
     openEditorComparison(uri, session);
     byId("editor-track").replaceChildren(new Option("No music", ""));
     changeEditorTrack();
@@ -260,6 +284,7 @@ async function openClipEditor(clip, path, uri) {
         const assets = await api("/api/editor-assets");
         if (editSession !== session) return;
         for (const track of assets.music) byId("editor-track").add(new Option(track, track));
+        for (const voiceover of assets.voiceovers || []) addVoiceoverAsset(voiceover);
         byId("editor-effect").replaceChildren(...assets.effects.map(effect => new Option(effect.label, effect.id)));
         byId("editor-hear-effect").disabled = assets.effects.length === 0;
         loadEditorVisualAssets(assets);
@@ -360,7 +385,7 @@ byId("editor-hear-effect").addEventListener("click", async () => {
     if (!effect) return;
     try {
         await enableEditorAudio();
-        const buffer = await getEffectBuffer(effect);
+        const buffer = await getAudioBuffer(effectUrl(effect));
         if (editSession !== session) return;
         auditionVoice?.stop();
         auditionVoice = playEditorSound(buffer, 65, editorAudio.context.currentTime);
@@ -402,7 +427,7 @@ function editorPayload() {
         message("editor-status", "Move every sound effect inside the trim range.");
         return null;
     }
-    const problem = validateEditorVisuals(session, end - start);
+    const problem = validateEditorVisuals(session, end - start) || audioRangeProblem(session.audioRegions, end - start);
     if (problem) {
         message("editor-status", problem);
         return null;
@@ -416,6 +441,8 @@ function editorPayload() {
         cues: session.cues.map(({effect, at, level}) => ({effect, at, level})),
         frame: fields.get("frame"), titles: session.titles, inserts: session.inserts, captions: session.captions,
         ranges: session.ranges, cuts: session.cuts, cut_fade: fields.get("cut_transition") === "fade",
+        audio_regions: session.audioRegions, reduce_rumble: fields.has("reduce_rumble"),
+        reduce_hiss: fields.has("reduce_hiss"), hum_filter: Number(fields.get("hum_filter")),
         caption_style: fields.get("caption_style"), clean_voice: fields.has("clean_voice"),
         duck_music: fields.has("duck_music"), music_fade_in: Number(fields.get("music_fade_in")),
         music_fade_out: Number(fields.get("music_fade_out")),
@@ -450,6 +477,10 @@ editorDialog.addEventListener("close", () => {
     clearRenderedPreview();
     closeEditorComparison();
     releaseReactionPreview();
+    voiceAudition.pause();
+    voiceAudition.removeAttribute("src");
+    voiceAudition.load();
+    soundBuffers.clear();
     editSession = undefined;
     cancelAnimationFrame(previewFrame);
     stopEditorMix();

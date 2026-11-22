@@ -161,6 +161,9 @@ function renderEditorTimeline() {
         ["picture", "Picture", editSession.ranges.map(range => ({...range, text: hasOffCenterFocus(range) ? "Focus crop" : "Picture effect"}))],
         ["inserts", "Inserts", editSession.inserts.map(cut => ({at: cut.at, end: cut.at, text: editSession.insertAssets.get(cut.asset).label}))],
         ["sounds", "Sounds", editSession.cues.map(cue => ({at: cue.at, end: cue.at, text: cue.label}))],
+        ["audio-regions", "Timed audio", editSession.audioRegions.map(region => ({
+            at: region.at, end: region.end, text: editSession.voiceovers.get(region.asset)?.label || "Original volume", region,
+        }))],
     ];
     const captionSelect = byId("editor-caption-select");
     const previous = captionSelect.value;
@@ -189,7 +192,11 @@ function renderEditorTimeline() {
             marker.style.width = Math.max(0, (Math.min(duration, cue.end) - cue.at) / duration * 100) + "%";
             marker.addEventListener("click", () => {
                 const tool = {source: "cut", cuts: "cut", captions: "text", titles: "text",
-                    picture: "picture", inserts: "inserts", sounds: "audio"}[type];
+                    picture: "picture", inserts: "inserts", sounds: "audio", "audio-regions": "audio"}[type];
+                if (cue.region) {
+                    openAudioRegion(cue.region);
+                    return;
+                }
                 showEditorTool(tool);
                 if (type === "captions") chooseCaption(cue.sourceIndex);
                 if (type === "source") selectSourceSection(cue.at, cue.end);

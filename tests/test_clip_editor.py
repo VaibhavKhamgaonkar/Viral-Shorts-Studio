@@ -317,3 +317,54 @@ class ClipEditorTests(unittest.TestCase):
                 self.assertTrue(has_audio)
                 metadata = json.loads(output.with_suffix(".json").read_text(encoding="utf-8"))
                 self.assertEqual(metadata["posting_context"], "Keep this caption")
+
+    def test_timed_voiceover_replaces_original_only_in_its_range(self):
+        ffmpeg = get_ffmpeg_cmd()
+        if not which(ffmpeg):
+            self.skipTest("FFmpeg is required to verify timed audio")
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            folder = root / "Dialogue_[original]"
+            folder.mkdir()
+            video = folder / "clip-01.mp4"
+            voice = root / "Narration.wav"
+            subprocess.run([ffmpeg, "-v", "error", "-f", "lavfi", "-i", "color=blue:s=160x284:r=30:d=3",
+                            "-f", "lavfi", "-i", "sine=frequency=440:duration=3",
+                            "-c:v", "libx264", "-c:a", "aac", str(video)], check=True)
+            subprocess.run([ffmpeg, "-v", "error", "-f", "lavfi", "-i", "sine=frequency=900:duration=2",
+                            str(voice)], check=True)
+            with patch.multiple(app, OUTPUT_DIR=root, VOICEOVERS_DIR=root / "voiceovers",
+                                JOB_QUEUE=JobQueue(root / "queue.sqlite3")), TestClient(app.app) as client:
+                with voice.open("rb") as audio_file:
+                    result = client.post("/api/editor-voiceovers", files={"file": ("Narration.wav", audio_file, "audio/wav")})
+                self.assertEqual(result.status_code, 200, result.text)
+                asset = result.json()
+                self.assertEqual(client.get("/api/editor-voiceovers/" + asset["id"]).headers["content-type"], "audio/wav")
+                self.assertIn(asset, client.get("/api/editor-assets").json()["voiceovers"])
+                route = "/api/edit/Dialogue_[original]/clip-01.mp4"
+                region = {"at": 1, "end": 2, "asset": asset["id"], "source_level": 0}
+                edit = {"start": 0, "end": 3, "audio_regions": [region], "reduce_rumble": True,
+                        "reduce_hiss": True, "hum_filter": 60}
+                response = client.post(route + "/preview", json=edit)
+                self.assertEqual(response.status_code, 200, response.text[:300] if not response.is_success else "")
+                with av.open(BytesIO(response.content)) as media:
+                    samples = np.concatenate([frame.to_ndarray()[0] for frame in media.decode(audio=0)])
+
+                def amplitude(frequency, start, end):
+                    window = samples[round(start * 48000):round(end * 48000)]
+                    phase = np.arange(len(window)) * (2j * np.pi * frequency / 48000)
+                    return abs(np.dot(window, np.exp(phase))) / len(window)
+
+                self.assertGreater(amplitude(440, .3, .7), .02)
+                self.assertLess(amplitude(440, 1.3, 1.7), .001)
+                self.assertGreater(amplitude(900, 1.3, 1.7), .02)
+                self.assertGreater(amplitude(440, 2.3, 2.7), .02)
+                self.assertLess(amplitude(900, 2.3, 2.7), .001)
+                overlapping = edit | {"audio_regions": [region, region | {"at": 1.5}]}
+                self.assertEqual(client.post(route, json=overlapping).status_code, 422)
+                missing = edit | {"audio_regions": [region | {"asset": "missing.wav"}]}
+                self.assertEqual(client.post(route, json=missing).status_code, 404)
+                queued = client.post(route, json=edit)
+                self.assertEqual(queued.status_code, 200, queued.text)
+                self.assertEqual(self.wait_for_job(client, queued.json()["job_id"])["status"], "completed")
+                self.assertTrue((folder / "clip-01-v2.mp4").is_file())

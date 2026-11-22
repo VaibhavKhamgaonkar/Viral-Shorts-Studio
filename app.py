@@ -1,11 +1,17 @@
+import hashlib
+import importlib.util
 import json
+import logging
 import math
 import os
 import re
 import shutil
+import subprocess
+import sys
 import threading
 import time
 import uuid
+import wave
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -29,16 +35,20 @@ from core.clip_editor import (
     render_edit, validate_timeline,
 )
 from core.downloader import DOWNLOADS_DIR, clear_all_downloads_detailed, get_downloads_storage_info, sanitize_filename
+from core.editor_speech import installed_voices, synthesize_speech
 from core.editor_visuals import FRAMES, REACTIONS, REACTION_DURATION, frame_gif, reaction_gif
 from core.job_queue import DuplicateJob, JobQueue
 from core.publisher import posting_metadata, read_caption_context, write_clip_metadata
 from core.studio_pipeline import run_job, transcribe_range
-from core.transformer import AUDIO_EXTENSIONS, MUSIC_DIR, OUTPUT_DIR, asset_files, inspect_media
+from core.transformer import AUDIO_EXTENSIONS, MUSIC_DIR, OUTPUT_DIR, asset_files, get_ffmpeg_cmd, inspect_media
 
 BASE_DIR = Path(__file__).resolve().parent
 WEB_DIR = BASE_DIR / "web"
 UPLOADS_DIR = BASE_DIR / "uploads"
 INSERTS_DIR = BASE_DIR / "assets" / "inserts"
+VOICEOVERS_DIR = BASE_DIR / "assets" / "voiceovers"
+VOICEOVER_MAX_SECONDS = 120
+AUDIO_MODELS_DIR = BASE_DIR / "data" / "audio-models"
 INSERT_EXTENSIONS = {".mp4", ".webm"}
 UPLOAD_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
 JOB_QUEUE = JobQueue(BASE_DIR / "data" / "jobs.sqlite3")
@@ -46,6 +56,8 @@ SETTINGS_LOCK = threading.Lock()
 POSTING_KIT_LOCK = threading.Lock()
 EDITOR_PREVIEW_LOCK = threading.Lock()
 EDITOR_CAPTIONS_LOCK = threading.Lock()
+EDITOR_STEMS_LOCK = threading.Lock()
+LOGGER = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -194,6 +206,7 @@ def editor_assets():
         inserts.append({"id": name, "label": file.stem, "hint": "Your library", "duration": asset.duration, "still": False})
     return {
         "music": list_music(),
+        "voiceovers": list_voiceovers(),
         "effects": [{"id": name, "label": settings[0], "duration": settings[1]} for name, settings in EFFECTS.items()],
         "looks": [{"id": name, "label": values[0], "css": values[2]} for name, values in LOOKS.items()],
         "frames": [{"id": name, "label": label} for name, label in FRAMES.items()],
@@ -275,6 +288,164 @@ def editor_effect(name: str):
 @app.get("/api/editor-music/{filename}")
 def editor_music(filename: str):
     return FileResponse(editor_music_file(filename))
+
+
+def editor_voiceover_asset(filename):
+    path = (VOICEOVERS_DIR / filename).resolve()
+    if path.parent != VOICEOVERS_DIR.resolve() or path.name != filename or path.suffix != ".wav" or not path.is_file():
+        raise HTTPException(404, "That audio clip is unavailable in your voice-over library.")
+    try:
+        with wave.open(str(path), "rb") as audio:
+            duration = audio.getnframes() / audio.getframerate()
+    except (OSError, EOFError, wave.Error) as error:
+        raise HTTPException(422, "Could not read that audio clip.") from error
+    return path, duration
+
+
+def voiceover_info(path, duration):
+    label = path.stem.rsplit("-", 1)[0].replace("_", " ")
+    return {"id": path.name, "label": label, "duration": duration}
+
+
+def list_voiceovers():
+    library = []
+    for file in asset_files(VOICEOVERS_DIR, {".wav"}):
+        try:
+            library.append(voiceover_info(*editor_voiceover_asset(file.name)))
+        except HTTPException:
+            continue
+    return library
+
+
+def save_voiceover(input_path, name, scratch, *, ident=None):
+    output = scratch / "voiceover.wav"
+    try:
+        subprocess.run(
+            [get_ffmpeg_cmd(), "-nostdin", "-v", "error", "-protocol_whitelist", "file,pipe",
+             "-format_whitelist", "wav,mp3,mov,flac,ogg,aac", "-i", str(input_path), "-map", "0:a:0",
+             "-t", str(VOICEOVER_MAX_SECONDS + .1), "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", str(output)],
+            check=True, capture_output=True, timeout=45,
+        )
+        with wave.open(str(output), "rb") as audio:
+            duration = audio.getnframes() / audio.getframerate()
+    except (OSError, subprocess.SubprocessError, EOFError, wave.Error) as error:
+        raise HTTPException(422, "Could not read that audio. Try exporting it as WAV or MP3.") from error
+    if not .05 <= duration <= VOICEOVER_MAX_SECONDS:
+        raise HTTPException(422, "Choose an audio clip between 0.05 seconds and 2 minutes.")
+    destination = VOICEOVERS_DIR / f"{sanitize_filename(name)}-{ident or uuid.uuid4().hex[:12]}.wav"
+    output.replace(destination)
+    return voiceover_info(destination, duration)
+
+
+@app.get("/api/editor-voiceovers/{filename}")
+def editor_voiceover(filename: str):
+    path, _ = editor_voiceover_asset(filename)
+    return FileResponse(path, media_type="audio/wav")
+
+
+@app.post("/api/editor-voiceovers")
+def import_voiceover(file: UploadFile = File(...)):
+    name = Path(file.filename or "")
+    if name.suffix.lower() not in AUDIO_EXTENSIONS:
+        raise HTTPException(415, "Choose an MP3, WAV, M4A, AAC, FLAC or OGG audio file.")
+    if file.file.seek(0, os.SEEK_END) > 25 * 1024 * 1024:
+        raise HTTPException(413, "Choose an audio file no larger than 25 MB.")
+    file.file.seek(0)
+    VOICEOVERS_DIR.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(dir=VOICEOVERS_DIR) as directory:
+        scratch = Path(directory)
+        source = scratch / "upload"
+        with source.open("xb") as target:
+            shutil.copyfileobj(file.file, target)
+        return save_voiceover(source, name.stem, scratch)
+
+
+@app.get("/api/editor-voices")
+def editor_voices():
+    try:
+        return {"voices": installed_voices()}
+    except RuntimeError as error:
+        return {"voices": [], "message": str(error)}
+
+
+class SpeechRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=850, pattern=r"\S")
+    voice: str = Field(default="", max_length=160)
+    rate: int = Field(default=0, ge=-4, le=4)
+
+
+class StemRequest(BaseModel):
+    start: float = Field(ge=0, allow_inf_nan=False)
+    end: float = Field(gt=0, allow_inf_nan=False)
+    revision: str = Field(default="", pattern=r"^\d{0,24}$")
+
+
+@app.post("/api/editor-voices")
+def generate_voiceover(request: SpeechRequest):
+    VOICEOVERS_DIR.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(dir=VOICEOVERS_DIR) as directory:
+        scratch = Path(directory)
+        source = scratch / "speech.wav"
+        try:
+            synthesize_speech(source, request.text, request.voice, request.rate)
+        except RuntimeError as error:
+            raise HTTPException(503, str(error)) from error
+        return save_voiceover(source, "Voice-over", scratch)
+
+
+@app.post("/api/edit/{folder_name}/{filename}/separate-audio")
+def separate_clip_audio(folder_name: str, filename: str, request: StemRequest):
+    video = exported_video(folder_name, filename)
+    revision = str(video.stat().st_mtime_ns)
+    if request.revision and request.revision != revision:
+        raise HTTPException(409, "The clip has changed. Refresh the library and reopen it.")
+    try:
+        duration, has_audio = inspect_media(video)
+    except (av.error.FFmpegError, ValueError) as error:
+        raise HTTPException(422, "Could not read the exported video.") from error
+    if not has_audio:
+        raise HTTPException(422, "This clip has no audio to separate.")
+    stop = min(duration, request.end)
+    length = stop - request.start
+    if not .5 <= length <= VOICEOVER_MAX_SECONDS or request.end > duration + .02:
+        raise HTTPException(422, "Choose 0.5 seconds to 2 minutes inside the source clip.")
+    key = hashlib.sha256(f"{video}|{revision}|{request.start:.6f}|{stop:.6f}".encode()).hexdigest()[:20]
+    names = {"voice": "Separated voice", "background": "Separated background"}
+    try:
+        return {kind: voiceover_info(*editor_voiceover_asset(f"{sanitize_filename(name)}-{key}.wav"))
+                for kind, name in names.items()}
+    except HTTPException:
+        pass
+    if importlib.util.find_spec("audio_separator") is None:
+        raise HTTPException(503, "Audio separation needs a one-time setup. Run setup_audio_separation.bat and restart the studio.")
+    if not EDITOR_STEMS_LOCK.acquire(blocking=False):
+        raise HTTPException(409, "Another audio separation is running. Try again after it finishes.")
+    try:
+        VOICEOVERS_DIR.mkdir(parents=True, exist_ok=True)
+        with TemporaryDirectory(dir=VOICEOVERS_DIR) as directory:
+            scratch = Path(directory)
+            source = scratch / "source.wav"
+            subprocess.run(
+                [get_ffmpeg_cmd(), "-nostdin", "-v", "error", "-ss", str(request.start), "-i", str(video),
+                 "-map", "0:a:0", "-t", str(length), "-af", "apad", "-ac", "2", "-ar", "44100", str(source)],
+                check=True, capture_output=True, timeout=45,
+            )
+            subprocess.run(
+                [sys.executable, "-m", "core.editor_stems", str(source), str(scratch), str(AUDIO_MODELS_DIR)],
+                cwd=BASE_DIR, check=True, capture_output=True, timeout=600,
+            )
+            if str(video.stat().st_mtime_ns) != revision:
+                raise HTTPException(409, "The clip changed during separation. Reopen it and try again.")
+            return {kind: save_voiceover(scratch / f"{kind}.wav", name, scratch, ident=key)
+                    for kind, name in names.items()}
+    except subprocess.TimeoutExpired as error:
+        raise HTTPException(504, "Audio separation took too long. Try a shorter range or check the model download.") from error
+    except (OSError, subprocess.CalledProcessError) as error:
+        details = (getattr(error, "stderr", None) or b"").decode("utf-8", errors="replace").strip()
+        LOGGER.error("Audio separation failed: %s", details[-1800:] or type(error).__name__)
+        raise HTTPException(503, "Could not separate this range. Check the model download and audio separation setup.") from error
+    finally:
+        EDITOR_STEMS_LOCK.release()
 
 
 @app.post("/api/music")
@@ -613,13 +784,15 @@ def process_edit(payload, update):
     base_title = existing.get("version_title") or title
     base_name = existing.get("version_base") or video.stem
     inserts = {cue.asset: editor_insert_asset(cue.asset) for cue in edit.inserts}
+    voiceovers = {region.asset: editor_voiceover_asset(region.asset) for region in edit.audio_regions if region.asset}
     duration = edit_duration(edit, inserts)
     detail = f"{duration:.2f} seconds · {len(edit.cues)} sound effects"
     with TemporaryDirectory(dir=video.parent) as scratch:
         staging = Path(scratch)
         temporary = staging / "edit.rendering"
         update("export", "Rendering edit", detail)
-        render_edit(video, temporary, edit, music, lambda percent: update("export", "Rendering edit", detail, percent), inserts=inserts)
+        render_edit(video, temporary, edit, music, lambda percent: update("export", "Rendering edit", detail, percent),
+                    inserts=inserts, voiceovers=voiceovers)
         with JOB_QUEUE.gate:
             if str(video.stat().st_mtime_ns) != existing["file_revision"]:
                 raise ValueError("The clip changed during rendering. Reopen it and try again.")
@@ -746,7 +919,8 @@ def inspect_clip_edit(folder_name, filename, edit):
         raise HTTPException(422, str(error)) from error
     music = editor_music_file(edit.music_track) if edit.music_track else None
     inserts = {cue.asset: editor_insert_asset(cue.asset) for cue in edit.inserts}
-    return video, music, inserts
+    voiceovers = {region.asset: editor_voiceover_asset(region.asset) for region in edit.audio_regions if region.asset}
+    return video, music, inserts, voiceovers
 
 
 @app.post("/api/edit/{folder_name}/{filename}/preview")
@@ -755,10 +929,10 @@ def preview_clip_edit(folder_name: str, filename: str, edit: ClipEdit):
         raise HTTPException(409, "Another preview is rendering. Try again in a moment.")
     scratch = None
     try:
-        video, music, inserts = inspect_clip_edit(folder_name, filename, edit)
+        video, music, inserts, voiceovers = inspect_clip_edit(folder_name, filename, edit)
         scratch = TemporaryDirectory(prefix="shorts-edit-preview-")
         output = Path(scratch.name) / "preview.mp4"
-        render_edit(video, output, edit, music, None, inserts=inserts, preview=True)
+        render_edit(video, output, edit, music, None, inserts=inserts, voiceovers=voiceovers, preview=True)
         return FileResponse(output, media_type="video/mp4", background=BackgroundTask(scratch.cleanup),
                             headers={"Cache-Control": "no-store"})
     except Exception:
@@ -809,7 +983,7 @@ def generate_editor_captions(folder_name: str, filename: str, revision: str = ""
 @app.post("/api/edit/{folder_name}/{filename}")
 def queue_clip_edit(folder_name: str, filename: str, edit: ClipEdit):
     with JOB_QUEUE.gate:
-        video, _, _ = inspect_clip_edit(folder_name, filename, edit)
+        video, *_ = inspect_clip_edit(folder_name, filename, edit)
         title = read_json(video.with_suffix(".json")).get("title") or video.stem
         title = str(title).removesuffix(" · Edited") + " · Edited"
         payload = edit.model_dump() | {"folder": video.parent.name, "filename": video.name, "source_type": "edit", "title": title}
