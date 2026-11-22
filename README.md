@@ -67,7 +67,7 @@ Click the pencil on a clip card. The editor shows the saved MP4 on the left and 
 - **Audio** controls source and music levels, sound effects, filters, timed replacements, and local narration. See [Audio editing](#audio-editing).
 - **Inserts** includes six built-in animations and accepts MP4 or WebM cutaways from 0.2 to 15 seconds and under 40 MB. A cutaway pauses the original and extends the edit. Imported inserts can keep their audio.
 
-Use **Play rendered edit** to check the final result alongside the original. **Save as new version** exports a numbered copy such as `clip-01-v2.mp4`. **Replace existing file** asks for confirmation before replacing the saved MP4. Follow the export in **Tasks**. The editor opens the saved MP4, including any captions that were already burned in.
+Use **Play rendered edit** to check the final result alongside the original. Choose a save mode next to **Export MP4** in the editor header. **Save as new version** exports a numbered copy such as `clip-01-v2.mp4`. **Replace existing file** asks for confirmation before replacing the saved MP4. Follow the export in **Tasks**. The editor opens the saved MP4, including any captions that were already burned in.
 
 ### Audio editing
 

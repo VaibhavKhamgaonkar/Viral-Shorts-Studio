@@ -316,8 +316,14 @@
 </dialog>
 <dialog id="clip-editor" class="clip-editor" aria-labelledby="editor-title">
     <header class="editor-header">
-        <div><h2 id="editor-title">Edit clip</h2><p id="editor-source"></p></div>
-        <form method="dialog"><button class="button button-outline" aria-label="Back to clips, close editor"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg> Back to clips</button></form>
+        <form method="dialog"><button class="button button-outline editor-back" aria-label="Back to clips, close editor" title="Back to clips"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg><span>Back to clips</span></button></form>
+        <div class="editor-document"><h2 id="editor-title">Edit clip</h2><p id="editor-source"></p></div>
+        <div class="editor-export-controls">
+            <label class="sr-only" for="editor-save-mode">Save edited clip</label>
+            <select id="editor-save-mode" name="save_mode" form="editor-form"><option value="version">Save as new version</option><option value="replace">Replace existing file</option></select>
+            <button id="editor-export" class="button button-primary" type="submit" form="editor-form" disabled><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg><span>Export MP4</span></button>
+        </div>
+        <p id="editor-status" class="form-message" role="status" hidden></p>
     </header>
     <div class="editor-workspace">
         <section class="editor-preview panel-plum" aria-labelledby="editor-preview-title">
@@ -539,6 +545,7 @@
                     <p class="editor-hint">A sound may share a track with audio playing at the same time.</p>
                 </div>
             </section>
+            <div class="editor-audio-options">
             <details class="editor-group editor-disclosure" id="editor-original-audio">
                 <summary>Original volume and filters</summary>
                 <div class="field"><label for="editor-source-level">Volume <output id="editor-source-level-value" for="editor-source-level">100%</output></label><input id="editor-source-level" name="source_level" type="range" min="0" max="100" value="100"></div>
@@ -621,16 +628,9 @@
             </details>
             </div>
             </div>
+            </div>
         </form>
     </div>
-    <footer class="editor-footer">
-        <p id="editor-status" class="form-message" role="status" hidden></p>
-        <div class="editor-save-options">
-            <label for="editor-save-mode">Save edited clip</label>
-            <select id="editor-save-mode" name="save_mode" form="editor-form"><option value="version">Save as new version</option><option value="replace">Replace existing file</option></select>
-        </div>
-        <button id="editor-export" class="button button-primary" type="submit" form="editor-form" disabled><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg> Export edited MP4</button>
-    </footer>
 </dialog>
 <dialog id="detail-dialog" aria-labelledby="dialog-title">
     <div class="dialog-header"><h2 id="dialog-title"></h2><form method="dialog"><button class="button button-outline icon-button" aria-label="Close dialog"><svg class="icon"><use href="#i-close"/></svg></button></form></div>

@@ -298,10 +298,7 @@ editorVideo.addEventListener("loadedmetadata", () => {
     if (!editorDialog.open) return;
     byId("editor-end").value = editorVideo.duration.toFixed(2);
     const aspect = editorVideo.videoWidth / editorVideo.videoHeight;
-    for (const frame of editorDialog.querySelectorAll(".editor-frame")) {
-        frame.style.aspectRatio = String(aspect);
-        frame.style.setProperty("--preview-max-width", "min(" + Math.min(85, 49 * aspect) + "vh, 460px)");
-    }
+    editorDialog.querySelector(".editor-comparison").style.setProperty("--frame-aspect", String(aspect));
     updateEditorTransport();
     renderEditorTimeline();
 });
