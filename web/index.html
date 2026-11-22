@@ -255,6 +255,7 @@
                         <div><strong>Instagram</strong><p id="instagram-connected" class="publish-account" data-state="loading">Checking connection…</p><label class="check publish-default" id="instagram-default" hidden><input type="checkbox" id="instagram-enabled" aria-label="Select Instagram by default"> Select by default</label></div>
                     </div>
                     <p id="instagram-connection-detail" class="section-copy" hidden></p>
+                    <p id="meta-connection-health" class="form-message" role="status" hidden></p>
                     <details class="publish-connection" id="meta-setup">
                         <summary><span id="meta-setup-label">Set up Facebook &amp; Instagram</span></summary>
                         <p class="section-copy">If your app shows <strong>Ready for testing</strong> for <code>pages_show_list</code>, <code>pages_read_engagement</code>, and <code>pages_manage_posts</code>, continue in Graph API Explorer. A fresh token still needs those permissions selected and granted.</p>
@@ -280,6 +281,12 @@
                             <li><h4>Connect your Page in the studio</h4><p>Paste the copied token below and click <strong>Find my Pages</strong>. Choose your Page by name, then click <strong>Connect this Page</strong>.</p>
                                 <form id="meta-connect-form" class="publish-connect-form">
                                     <div class="field"><label for="meta-user-token">User Access Token from Meta</label><input id="meta-user-token" type="password" autocomplete="off" maxlength="4096" required></div>
+                                    <details class="publish-alternative">
+                                        <summary>Use a longer-lived connection</summary>
+                                        <p>Open your app in <strong>Meta My Apps → App settings → Basic</strong>. Copy the App ID and select <strong>Show</strong> next to App Secret. Use the same app you selected in Explorer. The studio uses these details once to extend the token.</p>
+                                        <div class="field"><label for="meta-app-id">Meta App ID</label><input id="meta-app-id" inputmode="numeric" autocomplete="off" maxlength="32"></div>
+                                        <div class="field"><label for="meta-app-secret">Meta App Secret</label><input id="meta-app-secret" type="password" autocomplete="off" maxlength="128"></div>
+                                    </details>
                                     <button id="load-meta-pages" class="button button-primary" type="submit">Find my Pages</button>
                                     <div id="meta-page-choice" hidden>
                                         <div class="field"><label for="meta-page-id">Facebook Page</label><select id="meta-page-id" disabled></select></div>
@@ -364,6 +371,7 @@
     </header>
     <div class="kit-scroll">
         <p id="publish-dialog-loading" role="status">Checking connected accounts…</p>
+        <p id="publish-dialog-meta-warning" class="form-message" role="status" hidden></p>
         <a href="/settings#publishing" id="publish-dialog-settings" class="button button-outline" hidden>Open publishing settings</a>
         <form id="publish-form" hidden>
             <fieldset class="publish-fieldset"><legend>Destinations</legend><div id="publish-targets"></div></fieldset>

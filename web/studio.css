@@ -381,6 +381,7 @@ input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: var
 .publish-account-list strong { display: block; font-size: .83rem; }
 .publish-account { display: inline-block; max-width: 100%; overflow-wrap: anywhere; padding: 2px 7px; border-radius: 5px; color: var(--muted); background: var(--canvas); font-size: .8rem; }
 .publish-account[data-state="connected"] { color: var(--success); background: #eef4db; }
+.publish-account[data-state="expired"], .publish-account[data-state="unverified"] { color: var(--error); background: #f6e6e4; }
 .publish-default { margin-top: 3px; }
 .publish-connection { margin-top: 11px; border-top: 1px solid var(--line); }
 .publish-connection > summary { padding-block: 11px; cursor: pointer; font-size: .88rem; font-weight: 700; }

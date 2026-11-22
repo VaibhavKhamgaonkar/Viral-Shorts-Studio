@@ -35,18 +35,23 @@ YOUTUBE_SCOPES = (
 )
 CHUNK_SIZE = 8 * 1024 * 1024
 FACEBOOK_CHECK_DELAY = 30
+META_RECONNECT = "The Facebook and Instagram connection has expired. Reconnect the same Page in Settings, then resume the upload."
 
 
 class PublishError(Exception):
     pass
 
 
-def http(method, url, *, token=None, scheme="Bearer", headers=None, **options):
+class ExpiredConnection(PublishError):
+    pass
+
+
+def http(method, url, *, token=None, scheme="Bearer", headers=None, timeout=(10, 120), **options):
     headers = dict(headers or {})
     if token:
         headers["Authorization"] = f"{scheme} {token}"
     try:
-        return requests.request(method, url, headers=headers, timeout=(10, 120), allow_redirects=False, **options)
+        return requests.request(method, url, headers=headers, timeout=timeout, allow_redirects=False, **options)
     except requests.RequestException:
         raise PublishError("The platform did not respond. Retry this upload from the clip library.") from None
 
@@ -60,8 +65,8 @@ def json_response(response):
         return data
     error = data.get("error") if isinstance(data, dict) else None
     code = error.get("code") if isinstance(error, dict) else None
-    if response.status_code == 401 or code == 190 or error == "invalid_grant":
-        raise PublishError("The connection has expired. Reconnect the account in Settings and retry.")
+    if response.status_code == 401 or code in (102, 190) or error == "invalid_grant":
+        raise ExpiredConnection("The connection has expired. Reconnect the account in Settings and retry.")
     if response.status_code == 403 or code in (10, 200):
         raise PublishError("The platform denied access. Check the account's publishing permissions and API setup.")
     suffix = f", platform error {code}" if isinstance(code, int) and code != response.status_code else ""
@@ -124,6 +129,45 @@ class PublishStore:
 
     def instagram_setup_status(self):
         return self.connections().get("meta", {}).get("instagram_setup")
+
+    def meta_connection_status(self):
+        meta = self.connections().get("meta", {})
+        if not meta.get("token"):
+            return {"state": "disconnected"}
+        try:
+            self.verify_meta(meta)
+        except ExpiredConnection as error:
+            return {"state": "expired", "detail": str(error)}
+        except PublishError:
+            return {"state": "unverified", "detail": "Could not check the Meta connection. Try again in Settings or reopen Share."}
+        return {"state": "ready"}
+
+    @staticmethod
+    def verify_meta(meta):
+        if not meta.get("token"):
+            raise ExpiredConnection(META_RECONNECT)
+        try:
+            profile = graph("GET", "me", meta["token"], params={"fields": "id"}, timeout=(5, 8))
+        except ExpiredConnection:
+            raise ExpiredConnection(META_RECONNECT) from None
+        expected = meta.get("page_id") or meta.get("facebook", {}).get("id")
+        if not profile.get("id") or (expected and profile["id"] != expected):
+            raise ExpiredConnection(META_RECONNECT)
+
+    @staticmethod
+    def extend_meta_token(user_token, app_id, app_secret):
+        try:
+            result = graph("GET", "oauth/access_token", None, params={
+                "grant_type": "fb_exchange_token", "client_id": app_id,
+                "client_secret": app_secret, "fb_exchange_token": user_token,
+            }, timeout=(5, 15))
+        except ExpiredConnection:
+            raise PublishError("Generate a fresh User Access Token in Graph API Explorer before extending it.") from None
+        except PublishError:
+            raise PublishError("Meta could not extend the token. Check the App ID and App Secret for the app selected in Explorer.") from None
+        if not result.get("access_token"):
+            raise PublishError("Meta did not return a longer-lived token. Generate a fresh token and try again.")
+        return result["access_token"]
 
     def start_youtube(self, client, redirect):
         verifier = secrets.token_urlsafe(64)
@@ -193,14 +237,18 @@ class PublishStore:
             raise PublishError("This token is missing publishing permissions.\n"
                                + details
                                + "\nIn Graph API Explorer, add the permissions for the platform you want and generate a new User Access Token.")
-        if not facebook and self.account("facebook").get("id") == page_id:
-            names = ", ".join(sorted(missing["facebook"]))
-            raise PublishError(f"To add Instagram and keep Facebook connected, include these Facebook permissions in the new token: {names}.")
+        previous = self.connections().get("meta", {})
+        if (previous.get("page_id") or previous.get("facebook", {}).get("id")) == page_id:
+            for platform in ("facebook", "instagram"):
+                if previous.get(platform) and missing[platform]:
+                    name = PLATFORMS[platform]
+                    names = ", ".join(sorted(missing[platform]))
+                    raise PublishError(f"To keep {name} connected, include these permissions in the new token: {names}.")
         page = graph("GET", page_id, user_token, params={"fields": "id,name,access_token"})
         if page.get("id") != page_id or not page.get("access_token"):
             raise PublishError("Use a User token for an account that manages this Facebook Page.")
 
-        saved = {"token": page["access_token"]}
+        saved = {"token": page["access_token"], "page_id": page_id}
         if facebook:
             saved["facebook"] = {"id": page_id, "name": page.get("name") or "Facebook Page"}
         if not instagram:
@@ -277,6 +325,8 @@ class PublishStore:
         copy = self.directory / "uploads" / (key + ".mp4")
         if not (platform == "facebook" and receipt.get("finish_accepted")):
             update("source", "Authorizing destination", account["name"])
+            if platform in {"facebook", "instagram"}:
+                self.verify_meta(saved["meta"])
         if platform == "facebook":
             if not receipt.get("video_id") and self.facebook_upload_copy(
                 video, payload.get("facebook_duration"), info.st_size, copy, update,

@@ -29,11 +29,12 @@ function updateTaskClock(clock, now) {
     if (clock.textContent !== label) clock.textContent = label;
 }
 
-function taskTimes(job) {
+function taskTimes(job, history) {
     const times = element("div", "task-times");
     if (Number.isFinite(job.started_at)) {
-        const elapsed = job.finished_at ? job.finished_at - job.started_at : 0;
-        times.append(element("span", null, "Processing "), taskClock(elapsed, job.finished_at ? null : job.started_at));
+        const timed = history.filter(event => Number.isFinite(event.started_at));
+        const elapsed = timed.reduce((total, event) => total + (event.end ? event.end - event.started_at : 0), 0);
+        times.append(element("span", null, "Processing "), taskClock(elapsed, timed.find(event => !event.end)?.started_at));
     }
     if (Number.isFinite(job.queued_at)) {
         const wait = element("span", "task-wait", job.started_at ? " · Waited " : "Waiting ");
@@ -83,11 +84,11 @@ function queueCard(job, historyOpen) {
         : job.status === "completed" && job.kind === "publish" ? "Uploaded" : statusLabels[job.status];
     heading.append(name, element("span", "queue-status", label));
     card.append(heading);
-    const times = taskTimes(job);
-    if (times.childElementCount) card.append(times);
     const history = job.activity.map((event, index) => ({
         ...event, end: event.ended_at || job.activity[index + 1]?.started_at || job.finished_at,
     }));
+    const times = taskTimes(job, history);
+    if (times.childElementCount) card.append(times);
 
     const current = element("div", "queue-current");
     const inProgress = job.status === "running" || job.status === "checking";
@@ -132,6 +133,12 @@ function queueCard(job, historyOpen) {
     }
     if (job.status === "completed" || job.status === "failed") {
         const actions = element("div", "queue-view");
+        if (job.status === "failed" && /^(Facebook|Instagram) · /.test(job.source)
+            && /connection has expired/i.test(job.detail)) {
+            const reconnect = link("Reconnect Meta", "/settings#meta-setup", "arrow");
+            reconnect.dataset.queueControl = "reconnect";
+            actions.append(reconnect);
+        }
         if (job.can_retry) {
             const resume = action("Resume upload", async () => {
                 resume.disabled = true;

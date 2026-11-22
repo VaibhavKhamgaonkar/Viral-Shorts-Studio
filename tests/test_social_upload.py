@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 import app
 from core.job_queue import JobDeferred, JobQueue
 from core.social_upload import (
-    GOOGLE_TOKEN, META, META_VIDEO, YOUTUBE_SCOPES, PublishError, PublishStore, facebook_page_video_upload,
+    GOOGLE_TOKEN, META, META_VIDEO, YOUTUBE_SCOPES, ExpiredConnection, PublishError, PublishStore, facebook_page_video_upload,
     facebook_upload, instagram_upload, youtube_upload,
 )
 
@@ -78,6 +78,46 @@ class SocialUploadTests(unittest.TestCase):
                 "facebook": {"id": "123", "name": "SnapOdd Page"},
                 "instagram": {"id": "456", "name": "@snapodd"},
             })
+
+    def test_expired_meta_is_reported_for_both_destinations_without_exposing_credentials(self):
+        with TemporaryDirectory() as tmp:
+            store = PublishStore(tmp)
+            store.save_connection("meta", {"token": "private-page-token", "facebook": {"id": "123", "name": "SnapOdd"},
+                                          "instagram": {"id": "456", "name": "@snapodd"}})
+            client = TestClient(app.app, base_url="http://127.0.0.1:8000")
+            self.addCleanup(client.close)
+            with patch.object(app, "PUBLISHING", store), patch("core.social_upload.http", return_value=response(
+                401, {"error": {"code": 190, "error_subcode": 463, "message": "private-page-token"}},
+            )) as call:
+                status = client.get("/api/publishing?check_meta=true")
+            self.assertEqual(status.json()["meta_connection"]["state"], "expired")
+            self.assertEqual(set(status.json()["accounts"]), {"facebook", "instagram"})
+            self.assertNotIn("private-page-token", status.text)
+            self.assertEqual(call.call_args.args, ("GET", f"{META}/me"))
+
+    def test_long_lived_exchange_uses_new_user_token_and_saves_only_page_credential(self):
+        with TemporaryDirectory() as tmp:
+            store = PublishStore(tmp)
+            client = TestClient(app.app, base_url="http://127.0.0.1:8000")
+            self.addCleanup(client.close)
+            scopes = ("pages_show_list", "pages_read_engagement", "pages_manage_posts")
+            with patch.object(app, "PUBLISHING", store), patch("core.social_upload.http", side_effect=[
+                response(body={"access_token": "extended-user-token"}),
+                response(body={"data": [{"permission": scope, "status": "granted"} for scope in scopes]}),
+                response(body={"id": "123", "name": "SnapOdd", "access_token": "page-token"}),
+            ]) as call:
+                result = client.post("/api/publishing/meta/connect", json={
+                    "page_id": "123", "user_token": "fresh-user-token", "app_id": "456", "app_secret": "abcd1234abcd1234",
+                })
+            self.assertEqual(result.status_code, 200, result.text)
+            self.assertEqual(call.call_args_list[0].args, ("GET", f"{META}/oauth/access_token"))
+            self.assertEqual(call.call_args_list[1].kwargs["token"], "extended-user-token")
+            self.assertEqual(call.call_args_list[2].kwargs["token"], "extended-user-token")
+            saved = (Path(tmp) / "connections.json").read_text(encoding="utf-8")
+            self.assertIn("page-token", saved)
+            for secret in ("fresh-user-token", "extended-user-token", "abcd1234abcd1234"):
+                self.assertNotIn(secret, saved)
+                self.assertNotIn(secret, result.text)
 
     def test_meta_connection_reports_missing_and_declined_grants_for_each_platform(self):
         store = PublishStore("unused")
@@ -196,7 +236,8 @@ class SocialUploadTests(unittest.TestCase):
                 return "https://www.facebook.com/reel/222"
 
             with patch("core.social_upload.run_encoder", side_effect=encoder) as encode, \
-                    patch("core.social_upload.facebook_upload", side_effect=upload):
+                    patch("core.social_upload.facebook_upload", side_effect=upload), \
+                    patch("core.social_upload.graph", return_value={"id": "123"}):
                 with self.assertRaises(JobDeferred):
                     store.upload(payload, video, Mock())
                 self.assertTrue((store.directory / "uploads" / "upload.mp4").is_file())
@@ -204,6 +245,25 @@ class SocialUploadTests(unittest.TestCase):
                 encode.assert_called_once()
             self.assertEqual(video.stat().st_size, 30_000_000)
             self.assertFalse((store.directory / "uploads" / "upload.mp4").exists())
+
+    def test_expired_meta_stops_before_facebook_compression_or_instagram_upload(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = PublishStore(root / "publishing")
+            store.save_connection("meta", {"token": "expired-token", "facebook": {"id": "123", "name": "SnapOdd"},
+                                          "instagram": {"id": "456", "name": "@snapodd"}})
+            video = root / "clip.mp4"
+            video.write_bytes(b"fixture")
+            with patch("core.social_upload.http", return_value=response(401, {"error": {"code": 190}})) as call, \
+                    patch.object(store, "facebook_upload_copy") as prepare:
+                for platform, account in (("facebook", "123"), ("instagram", "456")):
+                    update = Mock()
+                    with self.assertRaisesRegex(ExpiredConnection, "Reconnect the same Page"):
+                        store.upload({"platform": platform, "key": platform, "account_id": account, "submission": {},
+                                      "revision": str(video.stat().st_mtime_ns)}, video, update)
+                    self.assertEqual(update.call_args.args[:2], ("source", "Authorizing destination"))
+                prepare.assert_not_called()
+                self.assertEqual([attempt.args for attempt in call.call_args_list], [("GET", f"{META}/me")] * 2)
 
     def test_worker_routes_an_export_over_ninety_seconds_to_page_video(self):
         payload = {"source_type": "publish", "platform": "facebook", "folder": "batch", "filename": "clip-01.mp4"}

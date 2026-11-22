@@ -11,18 +11,22 @@ function connectionStatus(service, text, success = false) {
 
 async function loadPublishingSettings() {
     try {
-        const {accounts, defaults, instagram_setup: instagramSetup} = await api("/api/publishing");
+        const {accounts, defaults, instagram_setup: instagramSetup, meta_connection: meta} =
+            await api("/api/publishing?check_meta=true", {cache: "no-store"});
         for (const platform of destinations) {
             const name = byId(platform + "-connected");
-            name.textContent = accounts[platform]?.name || "Not connected";
-            name.dataset.state = accounts[platform] ? "connected" : "disconnected";
-            byId(platform + "-default").hidden = !accounts[platform];
+            const account = accounts[platform];
+            const health = platform !== "youtube" && account && meta?.detail ? meta.state : "";
+            const label = health === "expired" ? " · Reconnect required" : health ? " · Unverified" : "";
+            name.textContent = account ? account.name + label : "Not connected";
+            name.dataset.state = account ? health || "connected" : "disconnected";
+            byId(platform + "-default").hidden = !account || Boolean(health);
             byId(platform + "-enabled").checked = Boolean(defaults[platform]);
         }
         byId("disconnect-youtube").hidden = !accounts.youtube;
         byId("disconnect-meta").hidden = !accounts.instagram && !accounts.facebook;
         const instagramDetail = byId("instagram-connection-detail");
-        instagramDetail.hidden = !accounts.facebook || Boolean(accounts.instagram);
+        instagramDetail.hidden = !accounts.facebook || Boolean(accounts.instagram) || meta?.state === "expired";
         const instagramMessages = {
             permissions: () => "The last token is missing " + instagramSetup.missing.join(", ") + ". Add the missing permissions and generate a new User Access Token.",
             unlinked: () => "Meta did not return a professional Instagram account for this Page. Check Linked accounts on your Facebook Page.",
@@ -31,7 +35,9 @@ async function loadPublishingSettings() {
         instagramDetail.textContent = instagramMessages[instagramSetup?.state]?.()
             || "Use Manage Meta connection to link Instagram and check the token permissions.";
         byId("youtube-setup-label").textContent = accounts.youtube ? "Change YouTube account" : "Set up YouTube";
-        byId("meta-setup-label").textContent = accounts.facebook || accounts.instagram ? "Manage Meta connection" : "Set up Facebook & Instagram";
+        byId("meta-setup-label").textContent = meta?.state === "expired" ? "Reconnect Facebook & Instagram"
+            : accounts.facebook || accounts.instagram ? "Manage Meta connection" : "Set up Facebook & Instagram";
+        message("meta-connection-health", meta?.detail || "");
         const query = new URLSearchParams(location.search);
         if (query.has("publishing_connected")) connectionStatus("youtube", "Connected to " + accounts.youtube?.name + ".", true);
         if (query.has("publishing_error")) {
@@ -41,6 +47,7 @@ async function loadPublishingSettings() {
         if (query.has("publishing_connected") || query.has("publishing_error")) {
             history.replaceState(null, "", "/settings#publishing");
         }
+        return meta;
     } catch (error) {
         for (const platform of destinations) byId(platform + "-connected").textContent = "Connection unavailable";
         connectionStatus("youtube", publishingSetupError(error));
@@ -82,6 +89,8 @@ byId("youtube-connect-form").addEventListener("submit", async event => {
 });
 
 const metaToken = byId("meta-user-token");
+const metaAppId = byId("meta-app-id");
+const metaAppSecret = byId("meta-app-secret");
 const metaPage = byId("meta-page-id");
 const findMetaPages = byId("load-meta-pages");
 const connectMetaPage = byId("connect-meta");
@@ -125,14 +134,23 @@ connectMetaPage.addEventListener("click", async ({currentTarget: button}) => {
     findMetaPages.disabled = true;
     metaToken.disabled = true;
     metaPage.disabled = true;
+    metaAppId.disabled = true;
+    metaAppSecret.disabled = true;
     connectionStatus("meta", "Checking the Page and publishing permissions…");
     try {
         const {accounts} = await api("/api/publishing/meta/connect", jsonRequest("POST", {
             page_id: metaPage.value, user_token: metaToken.value.trim(),
+            app_id: metaAppId.value.trim(), app_secret: metaAppSecret.value.trim() || null,
         }));
         metaToken.value = "";
+        metaAppId.value = "";
+        metaAppSecret.value = "";
         clearMetaPages();
-        await loadPublishingSettings();
+        const health = await loadPublishingSettings();
+        if (health?.detail) {
+            connectionStatus("meta", health.detail);
+            return;
+        }
         byId("meta-setup").open = false;
         const names = [accounts.facebook?.name, accounts.instagram?.name].filter(Boolean);
         connectionStatus("meta", "Connected to " + names.join(" and ") + ".", true);
@@ -140,6 +158,8 @@ connectMetaPage.addEventListener("click", async ({currentTarget: button}) => {
         connectionStatus("meta", publishingSetupError(error));
     } finally {
         metaToken.disabled = false;
+        metaAppId.disabled = false;
+        metaAppSecret.disabled = false;
         findMetaPages.disabled = false;
         metaPage.disabled = !metaPage.options.length;
         button.disabled = !metaPage.value;
@@ -296,7 +316,11 @@ async function openPublication(folder, clips) {
     publishForm.reset();
     publishForm.hidden = true;
     byId("publish-submit").disabled = true;
-    byId("publish-dialog-settings").hidden = true;
+    const settingsLink = byId("publish-dialog-settings");
+    settingsLink.hidden = true;
+    settingsLink.href = "/settings#publishing";
+    settingsLink.textContent = "Open publishing settings";
+    message("publish-dialog-meta-warning");
     byId("publish-dialog-loading").hidden = false;
     byId("publish-dialog-loading").textContent = "Checking connected accounts…";
     byId("publish-dialog-status").textContent = "";
@@ -305,26 +329,35 @@ async function openPublication(folder, clips) {
     publishDialog.showModal();
     publishDialog.querySelector(".kit-scroll").scrollTop = 0;
     try {
-        const {accounts, defaults} = await api("/api/publishing");
+        const {accounts, defaults, meta_connection: meta} = await api("/api/publishing?check_meta=true", {cache: "no-store"});
         if (publication !== state || !publishDialog.open) return;
-        const available = destinations.filter(platform => accounts[platform]);
+        const available = destinations.filter(platform => accounts[platform] && (platform === "youtube" || !meta?.detail));
+        if (meta?.detail) {
+            message("publish-dialog-meta-warning", meta.detail);
+            if (meta.state === "expired") {
+                settingsLink.href = "/settings#meta-setup";
+                settingsLink.textContent = "Reconnect Facebook & Instagram";
+            }
+        }
         state.targets = destinations.map(platform => {
             const account = accounts[platform];
+            const ready = available.includes(platform);
             const {input, choice} = publishChoice(platformNames[platform] + " · " + (account?.name || "Connect in Settings"),
-                platform, Boolean(account && (defaults[platform] ?? available.length === 1)));
-            input.disabled = !account;
+                platform, ready && (defaults[platform] ?? available.length === 1));
+            input.disabled = !ready;
             return {input, choice, account};
         });
         if (!available.length) {
-            byId("publish-dialog-loading").textContent = "Connect at least one account to upload clips.";
-            byId("publish-dialog-settings").hidden = false;
+            byId("publish-dialog-loading").hidden = Boolean(meta?.detail);
+            if (!meta?.detail) byId("publish-dialog-loading").textContent = "Connect at least one account to upload clips.";
+            settingsLink.hidden = false;
             return;
         }
         state.clips = clips.map(clip => publishClipRow(clip, clips.length === 1));
         byId("publish-clips").replaceChildren(...state.clips.map(({row}) => row));
         byId("publish-targets").replaceChildren(...state.targets.map(({choice}) => choice));
         byId("publish-dialog-loading").hidden = true;
-        byId("publish-dialog-settings").hidden = available.length === destinations.length;
+        settingsLink.hidden = available.length === destinations.length;
         publishForm.hidden = false;
         void refreshPublicationDrafts(state);
     } catch (error) {

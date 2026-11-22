@@ -26,7 +26,7 @@ import uvicorn
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, SecretStr, model_validator
 from starlette.background import BackgroundTask
 
 from config.settings import load_settings, save_settings
@@ -152,6 +152,8 @@ class MetaToken(BaseModel):
 
 class MetaConnection(MetaToken):
     page_id: str = Field(max_length=32, pattern=r"^[0-9]+$")
+    app_id: str = ""
+    app_secret: SecretStr | None = None
 
 
 class PublishClip(BaseModel):
@@ -225,9 +227,10 @@ def publishing_origin(request: Request):
 
 
 @app.get("/api/publishing")
-def get_publishing(_origin: str = Depends(publishing_origin)):
+def get_publishing(check_meta: bool = False, _origin: str = Depends(publishing_origin)):
     try:
         return {"accounts": PUBLISHING.public(), "instagram_setup": PUBLISHING.instagram_setup_status(),
+                "meta_connection": PUBLISHING.meta_connection_status() if check_meta else None,
                 "defaults": {key: destination.enabled for key, destination in studio_settings(load_settings()).destinations.items()}}
     except PublishError as error:
         raise HTTPException(503, str(error)) from None
@@ -269,8 +272,14 @@ def list_meta_pages(credentials: MetaToken, _origin: str = Depends(publishing_or
 @app.post("/api/publishing/meta/connect")
 def connect_meta(connection: MetaConnection, _origin: str = Depends(publishing_origin)):
     validate_meta_token(connection.user_token)
+    token = connection.user_token
+    secret = connection.app_secret.get_secret_value() if connection.app_secret else ""
     try:
-        PUBLISHING.connect_meta(connection.page_id, connection.user_token)
+        if connection.app_id or secret:
+            if not re.fullmatch(r"[0-9]{1,32}", connection.app_id) or not re.fullmatch(r"[A-Za-z0-9]{16,128}", secret):
+                raise PublishError("Enter both the App ID and App Secret from Meta App settings → Basic, or leave both blank.")
+            token = PUBLISHING.extend_meta_token(token, connection.app_id, secret)
+        PUBLISHING.connect_meta(connection.page_id, token)
         return {"accounts": PUBLISHING.public()}
     except PublishError as error:
         raise HTTPException(422, str(error)) from None
