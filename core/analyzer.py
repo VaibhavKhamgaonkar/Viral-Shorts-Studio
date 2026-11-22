@@ -180,7 +180,7 @@ def fill_available_ranges(selected, transcript, duration, clip_min, clip_max, co
     return selected
 
 
-POST_KIT_VERSION = 3
+POST_KIT_VERSION = 4
 POST_KIT_FIELDS = {
     "title": 95,
     "hook": 66,
@@ -197,8 +197,8 @@ POST_KIT_FIELDS = {
     "music_track": 255,
 }
 POST_KIT_REQUIRED = (
-    "title", "title_variants", "hook", "caption_lead", "caption_body", "caption_cta", "pinned_comment",
-    "tags", "audience", "posting_tip", "evidence",
+    "title", "title_variants", "hook", "caption_lead", "caption_body", "pinned_comment",
+    "audience", "posting_tip", "evidence",
 )
 POST_KIT_SCHEMA = {
     "type": "object",
@@ -207,9 +207,15 @@ POST_KIT_SCHEMA = {
         "title_variants": {"type": "array", "items": {"type": "string"}},
         "tags": {"type": "array", "items": {"type": "string"}},
     },
-    "required": list(POST_KIT_REQUIRED),
+    "required": [*POST_KIT_REQUIRED, "tags", "caption_cta"],
 }
-GENERIC_TAGS = {"fyp", "foryou", "foryoupage", "viral", "viralvideo", "viralshorts", "trending", "shorts", "youtubeshorts"}
+GENERIC_TAGS = {
+    "fyp", "foryou", "foryoupage", "viral", "viralvideo", "viralshorts", "trending", "shorts", "youtubeshorts",
+    "gaming", "gameplay", "openworld", "4k", "ps5", "robery",
+}
+GTA_EDITION = re.compile(r"\b(?:gta|grand[ _-]*theft[ _-]*auto)[ _-]*(vi|iv|v|[456])(?![\da-z])", re.I)
+GTA_TAG_EDITION = re.compile(r"^(?:gta|grandtheftauto)([456]|vi(?!ce)|iv|v(?!ice|ersion))", re.I)
+GTA_EDITION_NUMBER = {"vi": "6", "iv": "4", "v": "5"}
 
 
 def posting_excerpt(clip, transcript):
@@ -226,16 +232,57 @@ def post_text(value, limit):
     return text_field(value, limit)
 
 
-def normalize_post_draft(raw, source_text, music_tracks):
+def confirmed_gta_edition(notes):
+    confirmed = {GTA_EDITION_NUMBER.get(edition, edition) for edition in
+                 (match.group(1).lower() for match in GTA_EDITION.finditer(notes))}
+    return confirmed.pop() if len(confirmed) == 1 else None
+
+
+def posting_tags(tags, notes=""):
+    if isinstance(tags, str):
+        tags = re.findall(r"#[\w]+", tags)
+    if not isinstance(tags, list):
+        return []
+    approved = confirmed_gta_edition(notes)
+    clean = []
+    seen = set(GENERIC_TAGS)
+    for value in tags:
+        if not isinstance(value, str):
+            continue
+        tag = value.strip().lstrip("#")
+        key = tag.casefold()
+        if key in seen or not re.fullmatch(r"[^\W_][\w]{1,44}", tag):
+            continue
+        match = GTA_TAG_EDITION.match(tag.replace("_", ""))
+        if match:
+            edition = match.group(1).lower()
+            if GTA_EDITION_NUMBER.get(edition, edition) != approved:
+                continue
+        clean.append(tag)
+        seen.add(key)
+        if len(clean) == 3:
+            break
+    return clean
+
+
+def normalize_post_draft(raw, source_text, music_tracks, *, notes=""):
     draft = {name: text_field(raw.get(name), limit) for name, limit in POST_KIT_FIELDS.items()}
+    approved = confirmed_gta_edition(notes)
+
+    def grounded_text(value, limit):
+        def edition_label(match):
+            edition = match.group(1).lower()
+            return match.group() if GTA_EDITION_NUMBER.get(edition, edition) == approved else "GTA"
+        return GTA_EDITION.sub(edition_label, post_text(value, limit))
+
     for field in ("title", "hook", "caption_lead", "caption_body", "caption_cta", "pinned_comment"):
-        draft[field] = post_text(raw.get(field), POST_KIT_FIELDS[field])
+        draft[field] = grounded_text(raw.get(field), POST_KIT_FIELDS[field])
     variants = raw.get("title_variants", [])
     draft["title_variants"] = []
     seen_titles = {re.sub(r"[\W_]+", "", draft["title"].casefold())}
     if isinstance(variants, list):
         for variant in variants:
-            title = post_text(variant, 95)
+            title = grounded_text(variant, 95)
             token = re.sub(r"[\W_]+", "", title.casefold())
             if token and token not in seen_titles:
                 draft["title_variants"].append(title)
@@ -243,20 +290,7 @@ def normalize_post_draft(raw, source_text, music_tracks):
             if len(draft["title_variants"]) == 2:
                 break
 
-    tags = raw.get("tags", [])
-    if isinstance(tags, str):
-        tags = re.findall(r"#[\w]+", tags)
-    draft["tags"] = []
-    seen_tags = set(GENERIC_TAGS)
-    if isinstance(tags, list):
-        for tag in tags:
-            tag = text_field(tag, 45).lstrip("#")
-            tag = "".join(char for char in tag if char.isalnum() or char == "_")
-            if len(tag) > 1 and tag.casefold() not in seen_tags:
-                draft["tags"].append(tag)
-                seen_tags.add(tag.casefold())
-            if len(draft["tags"]) == 5:
-                break
+    draft["tags"] = posting_tags(raw.get("tags", []), notes)
 
     if draft["music_track"] not in music_tracks:
         draft["music_track"] = ""
@@ -269,7 +303,7 @@ def normalize_post_draft(raw, source_text, music_tracks):
 
 def missing_post_fields(draft):
     missing = [field for field in POST_KIT_REQUIRED if not draft[field]]
-    for field, minimum in (("tags", 3), ("title_variants", 2), ("caption_body", 50)):
+    for field, minimum in (("title_variants", 2), ("caption_body", 15)):
         if field not in missing and len(draft[field]) < minimum:
             missing.append(field)
     if draft["pinned_comment"] and draft["pinned_comment"].casefold().rstrip("?! .") == draft["caption_cta"].casefold().rstrip("?! ."):
@@ -282,35 +316,39 @@ def generate_post_copy(clip, transcript, source_title, settings, music_tracks=()
     notes = text_field(notes, 800)
     source_text = f"{notes}\n{excerpt}".strip()
     usable_context = bool(notes) or len(re.sub(r"[\W_]", "", excerpt)) >= 36
-    fallback = normalize_post_draft({}, "", music_tracks) | {
-        "title": text_field(clip.get("title"), 95) or text_field(source_title, 95) or "Untitled clip",
+    fallback = normalize_post_draft({"title": clip.get("title") or source_title}, "", music_tracks, notes=notes) | {
         "description": "",
         "copy_source": "model_unavailable" if usable_context else "no_transcript",
         "posting_context": excerpt,
         "posting_notes": notes,
     }
+    fallback["title"] = fallback["title"] or "Untitled clip"
     if not usable_context:
         return fallback
 
     prompt = (
-        "Write a publishing kit for one YouTube Short. Match the language of the notes or transcript. "
-        "Source label identifies the topic only. Use clip notes and transcript as evidence for what happens. "
-        "Stay with actions explicitly described in the notes or transcript. Never turn walking into a chase or a look into a reveal. "
-        "Never infer scenes, game versions, official status, stats or quotes from a source label. "
-        "If the transcript is sparse or noisy, trust specific creator notes and keep claims narrow.\n"
-        "Title: name the subject early and tease a specific choice, contrast, or payoff supported by the clip. "
-        "Title_variants: two genuinely different angles on the same moment. Use an observation, a question, or a practical takeaway. "
-        "Hook: one short on-screen line for the first two seconds. Start with a concrete action, detail, or question. "
-        "Avoid stock openers such as 'discover', 'explore', and unsourced superlatives like 'ultimate' or 'the best'. "
-        "Caption_lead: introduce the tension or interesting detail in one line. "
-        "Caption_body: two concrete sentences about what changes and why the payoff matters. "
-        "Caption_cta: one question offering specific choices or asking viewers to notice or predict a detail. "
-        "Pinned_comment: ask about a different detail than the caption question and invite a reason, an example, or a counterpoint. "
-        "Tags: 3–5 closely related hashtags, combining the subject, niche, and activity. Put hashtags only in the tags array. "
-        "Skip generic reach-bait such as viral, fyp, trending, and shorts. "
-        "Prefer any supplied YouTube hashtags that match the clip. Treat them as search evidence only. "
-        "Audience: who would care about this particular clip. "
-        "Posting_tip and editing_tip: concrete suggestions tied to its moment. "
+        "Write a ready-to-paste YouTube Shorts posting kit in the language of the creator notes or transcript. "
+        "Choose ONE moment. Identify what changes, what the viewer can notice, or what the clip actually answers. "
+        "Use creator notes for visual facts. Use the transcript for spoken facts. You cannot see footage. "
+        "Use the source label only for broad subject context. Treat it and searched tags as unverified. "
+        "Use a game version, hardware model, or resolution only if confirmed in creator notes. "
+        "When evidence is thin, describe a narrower moment without guessing. Do not invent a chase, secret, glitch, reveal, quote, or stakes.\n"
+        "Title: lead with a specific subject and action or contrast. Aim for 35–65 characters. "
+        "Title_variants: two distinct angles on the same moment, using a detail, contrast, or genuinely answerable question. "
+        "Hook: an on-screen line of 3–9 words that makes sense in the first second without audio. "
+        "Skip 'discover', 'explore', 'unforgettable', 'ultimate', and generic excitement. "
+        "Caption_lead and caption_body: one short, complete sentence each in natural language. "
+        "Describe the moment, then add a different supported detail or say what happens next. Avoid repeating the title. "
+        "Caption_cta: empty unless a specific viewer question adds something. Pinned_comment: ask about one detail in the clip. "
+        "Title, hook and caption must contain publication copy only, with no labels, instructions, or hashtags. "
+        "Tags: suggest one to three correctly spelled tags when the notes or transcript give a clear subject or action. "
+        "If no relevant tag fits, use an empty array. Put tags only in the tags array. "
+        "Use a researched tag only if it fits the evidence. Never pad the list with broad tags like gaming, openworld, trending, or shorts. "
+        "Audience: who would care and why. Posting_tip: one change the creator can try. "
+        "Editing_tip: identify a real moment to open on. If its time is unknown, describe it without an invented timestamp. "
+        "Example with a creator note showing a pickup-to-sports-car swap: title 'From Pickup to Sports Car in GTA Free Roam', "
+        "hook 'Watch the car swap', caption focused on the switch and drive-away, tags ['GTA', 'CarSwap']. "
+        "Do not reuse the example unless it matches. "
         "Evidence: copy a short continuous phrase exactly as written in the notes or transcript. "
         "Optional music_brief and sound_effect_prompt may be empty. "
         "Music_track must be an exact match from the local library or empty. Never claim predicted virality or tag popularity.\n"
@@ -339,7 +377,7 @@ def generate_post_copy(clip, transcript, source_title, settings, music_tracks=()
         except (requests.RequestException, KeyError, ValueError, IndexError, TypeError):
             break
         if result:
-            draft = normalize_post_draft(result[0], source_text, music_tracks)
+            draft = normalize_post_draft(result[0], source_text, music_tracks, notes=notes)
             absent = missing_post_fields(draft)
             if draft["title"] and (best is None or len(absent) <= len(missing)):
                 best, missing = draft, absent

@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from core.analyzer import analyze_transcript_for_viral_clips, candidate, generate_post_copy
+from core.analyzer import analyze_transcript_for_viral_clips, candidate, generate_post_copy, posting_tags
 
 
 class HighlightTests(unittest.TestCase):
@@ -103,6 +103,32 @@ class HighlightTests(unittest.TestCase):
         self.assertEqual(copy["title_variants"], ["Diagnose a noisy crank", "One wrench fixed the wobble"])
         self.assertEqual(len(copy["description"].split("\n\n")), 3)
         self.assertEqual(copy["evidence"], "tightens a loose crank bolt")
+
+    def test_posting_kit_uses_one_verified_edition_and_limits_tags(self):
+        settings = {"llm_base_url": "http://localhost:11434/v1", "llm_api_key": "ollama", "llm_model": "qwen2.5:7b"}
+        raw = {
+            "title": "GTA 6: From Pickup to Sports Car #gaming",
+            "title_variants": ["The Pickup Gets Left Behind in GTA VI", "One Switch Changes the Drive"],
+            "hook": "Watch the car swap",
+            "caption_lead": "The player switches cars in GTA V.",
+            "caption_body": "The player swaps a black pickup for a red sports car.",
+            "pinned_comment": "Which car would you pick?",
+            "tags": ["#robery", "#Gaming", "#GTAVI", "#GTAV", "#CarSwap", "#SportsCar", "#GTAGameplay"],
+            "audience": "Players who like free roam", "posting_tip": "Open on the car swap",
+            "evidence": "swaps a black pickup for a red sports car",
+        }
+        notes = "In GTA V, the player swaps a black pickup for a red sports car."
+        with patch("core.analyzer.ask_model", return_value=[raw]) as model:
+            copy = generate_post_copy({}, [], "GTA 6 PS5 Gameplay", settings, excerpt="", notes=notes,
+                                      researched_hashtags=("GTA6",))
+        model.assert_called_once()
+        self.assertIn("You cannot see footage", model.call_args.args[0])
+        self.assertTrue(copy["copy_ready"])
+        self.assertEqual(copy["title"], "GTA: From Pickup to Sports Car")
+        self.assertIn("GTA V", copy["description"])
+        self.assertEqual(copy["tags"], ["GTAV", "CarSwap", "SportsCar"])
+        self.assertEqual(posting_tags(["GTA_6", "GTAVGameplay", "GTAViceCity", "CarSwap", "PS5"]), ["GTAViceCity", "CarSwap"])
+        self.assertEqual(posting_tags(["GTAV", "GTA6", "CarSwap"], "GTA V and GTA VI are both mentioned."), ["CarSwap"])
 
 
 if __name__ == "__main__":

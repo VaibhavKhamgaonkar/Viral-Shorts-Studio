@@ -31,7 +31,7 @@ from starlette.background import BackgroundTask
 
 from config.settings import load_settings, save_settings
 from config.studio import Destination, Layout, Platform, StudioSettings, studio_settings
-from core.analyzer import generate_post_copy
+from core.analyzer import generate_post_copy, posting_tags
 from core.audio_breakdown import read_audio, write_audio
 from core.clip_editor import (
     ClipEdit, EFFECTS, LOOKS, InsertAsset, edit_duration, effect_wave, frame_rate, kept_source_ranges,
@@ -938,6 +938,8 @@ def exported_clip(video):
 
 def public_clip(clip):
     clip.pop("posting_context", None)
+    if "tags" in clip:
+        clip["tags"] = posting_tags(clip["tags"], clip.get("posting_notes") or "")
     return clip
 
 

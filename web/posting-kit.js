@@ -31,12 +31,12 @@ function kitCopyButton(label, text) {
 function kitTags(clip) {
     const suggestions = Array.isArray(clip.tags) ? clip.tags : [];
     const tags = new Map();
-    for (const value of [...youtubeTagSources(clip).map(entry => entry.tag), ...suggestions]) {
+    for (const value of suggestions) {
         if (typeof value !== "string") continue;
         const tag = "#" + value.trim().replace(/^#+/, "").replace(/\s+/g, "");
         if (tag.length > 1 && !tags.has(tag.toLowerCase())) tags.set(tag.toLowerCase(), tag);
     }
-    return [...tags.values()].slice(0, 5);
+    return [...tags.values()].slice(0, 3);
 }
 
 function youtubeTagSources(clip) {
@@ -51,41 +51,34 @@ function kitPath(request) {
 function hashtagSection(clip) {
     const section = kitSection("Hashtags", "kit-hashtags");
     const tags = kitTags(clip);
-    const sources = new Map(youtubeTagSources(clip).map(entry => ["#" + entry.tag.toLowerCase(), entry]));
+    const sources = youtubeTagSources(clip);
     if (tags.length) {
         const list = element("ul", "kit-tags");
         list.setAttribute("aria-label", "Hashtags included when you copy the post");
-        for (const tag of tags) {
-            const source = sources.get(tag.toLowerCase());
-            const item = element("li");
-            if (source && /^[A-Za-z0-9_-]{11}$/.test(source.video_id)) {
-                const evidence = element("a", null, tag);
-                evidence.href = "https://www.youtube.com/watch?v=" + source.video_id;
-                evidence.target = "_blank";
-                evidence.rel = "noopener noreferrer";
-                const label = tag + " on YouTube" + (Number.isFinite(source.views) ? " · " + source.views.toLocaleString() + " views on this video" : "");
-                evidence.setAttribute("aria-label", label + " (opens in a new tab)");
-                evidence.title = label;
-                evidence.append(icon("link"));
-                item.className = "kit-tag-sourced";
-                item.append(evidence);
-            } else {
-                item.append(element("span", null, tag));
-            }
-            list.append(item);
-        }
-        section.append(list);
-        if (sources.size) {
-            const research = clip.hashtag_research;
-            const checked = new Date(research.checked_at);
-            const date = Number.isNaN(checked.getTime()) ? "" : " · " + checked.toLocaleDateString();
-            section.append(element("p", "kit-muted",
-                "YouTube sample of " + research.sample_size + " short videos for “" + research.topic + "”" + date + "."));
-        }
-        if (tags.length > sources.size) section.append(element("p", "kit-muted", "Unlinked tags are AI suggestions."));
-        section.append(kitCopyButton("Hashtags", tags.join(" ")));
+        for (const tag of tags) list.append(element("li", null, tag));
+        section.append(list, kitCopyButton("Hashtags", tags.join(" ")));
     } else {
         section.append(element("p", "kit-muted", "No hashtags yet."));
+    }
+    if (sources.length) {
+        const research = clip.hashtag_research;
+        const list = element("ul", "kit-tags");
+        list.setAttribute("aria-label", "YouTube hashtag research results");
+        for (const source of sources) {
+            if (!/^[A-Za-z0-9_-]{11}$/.test(source.video_id)) continue;
+            const tag = "#" + source.tag;
+            const evidence = element("a", null, tag);
+            evidence.href = "https://www.youtube.com/watch?v=" + source.video_id;
+            evidence.target = "_blank";
+            evidence.rel = "noopener noreferrer";
+            evidence.title = tag + " on YouTube" + (Number.isFinite(source.views) ? " · " + source.views.toLocaleString() + " views on this video" : "");
+            evidence.setAttribute("aria-label", evidence.title + " (opens in a new tab)");
+            evidence.append(icon("link"));
+            const item = element("li", "kit-tag-sourced");
+            item.append(evidence);
+            list.append(item);
+        }
+        section.append(element("p", "kit-muted", "YouTube research for “" + research.topic + "”. Regenerate to consider these tags in the draft."), list);
     }
 
     const field = element("form", "kit-hashtag-search");
@@ -116,8 +109,12 @@ function hashtagSection(clip) {
     return section;
 }
 
+function postCaption(clip) {
+    return (clip.description || "").replace(/(^|[ \t])#[\p{L}\p{N}_]+/gmu, "").trim();
+}
+
 function postText(clip) {
-    return [clip.description, kitTags(clip).join(" ")].filter(Boolean).join("\n\n");
+    return [postCaption(clip), kitTags(clip).join(" ")].filter(Boolean).join("\n\n");
 }
 
 function titlePicker(clip, selectedTitle) {
@@ -160,10 +157,10 @@ function renderKit(clip, selectedTitle) {
     const sections = [];
     if (clip.copy_needs_review) {
         sections.push(element("p", "kit-review", "This draft was written before the latest edit. Review it against the new clip or regenerate it."));
-    } else if (!clip.posting_kit_version || !clip.copy_ready) {
-        const note = clip.posting_kit_version
-            ? "This draft is missing some fields. Add clip context and regenerate to fill them in."
-            : "This kit uses the earlier format. Regenerate for a fuller caption, topical hashtags, and engagement prompts.";
+    } else if (!clip.copy_ready || !(clip.posting_kit_version >= 4)) {
+        const note = clip.copy_ready
+            ? "Regenerate this older draft for a shorter caption and more focused tags."
+            : "Add a note about the exact moment in the clip and regenerate to complete this draft.";
         sections.push(element("p", "kit-review", note));
     }
 
@@ -172,7 +169,7 @@ function renderKit(clip, selectedTitle) {
     main.append(titlePicker(clip, selectedTitle));
     const caption = kitSection("Caption");
     if (clip.description) {
-        caption.append(element("p", "kit-caption", clip.description),
+        caption.append(element("p", "kit-caption", postCaption(clip)),
             kitCopyButton(kitTags(clip).length ? "Caption + hashtags" : "Caption", postText(clip)));
     } else {
         caption.append(element("p", "kit-muted", "No caption in this draft."));
@@ -246,7 +243,7 @@ async function findKitHashtags(event) {
         request.clip.hashtag_research = research;
         if (activeKit === request && kitDialog.open) {
             renderKit(request.clip, chosenTitle());
-            kitStatus("YouTube hashtags added to the post.");
+            kitStatus("YouTube research saved. Regenerate the draft to consider these tags.");
         }
     } catch (error) {
         if (activeKit === request && kitDialog.open) {
