@@ -203,14 +203,14 @@ def download_video_section(url: str, start_sec: float, end_sec: float, output_pa
         print(f"[!] Failed to fetch section: {e}")
         return False
 
-def download_audio_only(url: str) -> dict:
-    """Downloads ONLY compressed audio stream for Whisper without downloading any video (10x faster)."""
+def download_audio_only(url: str, *, info=None, progress=None) -> dict:
+    """Download the compressed audio stream for Whisper."""
     DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
-    info = extract_video_info(url)
+    info = info if info is not None else extract_video_info(url)
     clean_title = sanitize_filename(info["title"])
     video_id = info.get("id", "video")
-    
-    output_template = str(DOWNLOADS_DIR / f"{clean_title}_{video_id}.%(ext)s")
+    stem = f"{clean_title}_{video_id}_audio"
+    output_template = str(DOWNLOADS_DIR / f"{stem}.%(ext)s")
     cmd = [
         get_yt_dlp_cmd(),
         "-f", "ba[ext=m4a]/ba/bestaudio",
@@ -221,13 +221,13 @@ def download_audio_only(url: str) -> dict:
         url
     ]
     try:
-        subprocess.run(cmd, check=True)
+        run_download(cmd, progress)
     except Exception as e:
         print(f"[!] Audio-only download failed: {e}")
 
     audio_file = None
-    for f in DOWNLOADS_DIR.glob(f"{clean_title}_{video_id}.*"):
-        if f.suffix.lower() in [".m4a", ".mp3", ".wav", ".aac"]:
+    for f in DOWNLOADS_DIR.glob(f"{stem}.*"):
+        if f.suffix.lower() in {".m4a", ".mp3", ".wav", ".aac", ".webm", ".opus", ".ogg"} and f.stat().st_size > 1024:
             audio_file = str(f)
             break
             
@@ -313,7 +313,7 @@ def check_existing_download(clean_title: str, video_id: str) -> dict:
         "subtitle_path": sub_file
     }
 
-def download_video(url: str, output_name: str = None, *, progress=None) -> dict:
+def download_video(url: str, output_name: str = None, *, include_subtitles=True, progress=None) -> dict:
     from core.transformer import get_ffmpeg_cmd
 
     DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
@@ -335,6 +335,7 @@ def download_video(url: str, output_name: str = None, *, progress=None) -> dict:
     output_template = str(DOWNLOADS_DIR / f"{clean_title}_{video_id}.%(ext)s")
     
     # Fast multi-threaded concurrent download (8 parallel connections)
+    subtitle_args = ["--write-subs", "--write-auto-sub", "--sub-lang", "en", "--sub-format", "vtt"] if include_subtitles else []
     cmd = [
         get_yt_dlp_cmd(),
         "-f", "best[ext=mp4]/bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best",
@@ -342,10 +343,7 @@ def download_video(url: str, output_name: str = None, *, progress=None) -> dict:
         "--concurrent-fragments", "8",
         "--no-mtime",
         "--ffmpeg-location", get_ffmpeg_cmd(),
-        "--write-subs",
-        "--write-auto-sub",
-        "--sub-lang", "en",
-        "--sub-format", "vtt",
+        *subtitle_args,
         "-o", output_template,
         "--no-playlist",
         url

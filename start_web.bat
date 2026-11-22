@@ -71,6 +71,7 @@ echo =================================================================
 echo [*] Opening Studio Web Dashboard at: http://127.0.0.1:8000
 echo =================================================================
 echo [NOTE] Keep this window open while using the studio.
+echo [NOTE] A running studio is reused. After an update, let its jobs finish before restarting it.
 echo.
 
 python app.py --open-browser

@@ -3,7 +3,9 @@ from pathlib import Path
 
 from config.studio import CLIP_LENGTHS
 from core.analyzer import analyze_transcript_for_viral_clips, generate_post_copy
-from core.downloader import download_video, download_video_section, fetch_subtitles_only, sanitize_filename
+from core.downloader import (
+    download_audio_only, download_video, download_video_section, fetch_subtitles_only, sanitize_filename,
+)
 from core.publisher import generate_clip_metadata, save_task_info
 from core.subtitles import generate_ass_subtitles
 from core.transcriber import get_transcript, parse_vtt_subtitles
@@ -38,12 +40,14 @@ def run_job(job_id, request, settings, update, cleanup):
     transcript = []
     source = None
     audio = None
+    has_audio = False
 
     def full_download(phase="source"):
         stage = "Downloading source"
         detail = "Fetching the full video. Transfer progress is for the current stream."
         update(phase, stage, detail)
-        result = download_video(source_url, progress=lambda percent: update(phase, stage, detail, percent))
+        result = download_video(source_url, include_subtitles=False,
+                                progress=lambda percent: update(phase, stage, detail, percent))
         if not result["video_path"]:
             raise RuntimeError("The downloaded source does not contain a video file.")
         return Path(result["video_path"]), result.get("audio_path")
@@ -57,8 +61,18 @@ def run_job(job_id, request, settings, update, cleanup):
         duration = info.get("duration") or 0
         if captions["subtitle_path"]:
             transcript = parse_vtt_subtitles(captions["subtitle_path"])
-        if not duration or (not transcript and request.selection == "highlights"):
+        if not duration:
             source, audio = full_download()
+        elif not transcript and request.selection == "highlights":
+            stage = "Downloading audio stream"
+            detail = "Fetching lightweight audio for local speech recognition."
+            update("source", stage, detail)
+            audio_info = download_audio_only(
+                source_url, info=info, progress=lambda percent: update("source", stage, detail, percent),
+            )
+            audio = audio_info.get("audio_path")
+            if not audio:
+                source, audio = full_download()
     else:
         source = Path(request.file_path)
         source_title = source.stem.rsplit("_", 1)[0]
@@ -69,15 +83,16 @@ def run_job(job_id, request, settings, update, cleanup):
     if source:
         duration, has_audio = inspect_media(source)
         audio = audio or (find_companion_audio(source) if not has_audio else None)
-        if request.selection == "highlights" and not transcript and (has_audio or audio):
-            stage = "Transcribing speech"
-            detail = "Whisper is reading the audio locally."
-            update("transcript", stage, detail)
-            transcript = get_transcript(
-                str(source), audio_path=audio, model_size=settings["whisper_model_size"],
-                device=settings["whisper_device"],
-                progress=lambda percent: update("transcript", stage, detail, percent),
-            )
+
+    if request.selection == "highlights" and not transcript and (has_audio or audio):
+        stage = "Transcribing speech"
+        detail = "Whisper is reading the audio locally."
+        update("transcript", stage, detail)
+        transcript = get_transcript(
+            str(source or audio), audio_path=audio, model_size=settings["whisper_model_size"],
+            device=settings["whisper_device"],
+            progress=lambda percent: update("transcript", stage, detail, percent),
+        )
     if duration <= 0:
         raise ValueError("The video duration could not be determined.")
 
@@ -109,7 +124,9 @@ def run_job(job_id, request, settings, update, cleanup):
     music = {path.name: path for path in asset_files(MUSIC_DIR, AUDIO_EXTENSIONS)}
     source_files = []
     if source:
-        source_files.extend([str(source), audio])
+        source_files.append(str(source))
+    if audio:
+        source_files.append(audio)
 
     save_task_info(task_dir, job_id, source_url, source_title, info.get("uploader", "Unknown"), duration, filter(None, source_files))
     for index, clip in enumerate(clips, 1):
