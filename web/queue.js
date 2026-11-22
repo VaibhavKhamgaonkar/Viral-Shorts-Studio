@@ -8,7 +8,7 @@ const phases = [
     ["finalize", "Save clips"],
 ];
 const publishPhases = [["source", "Account"], ["export", "Upload MP4"], ["finalize", "Confirm upload"]];
-const statusLabels = {queued: "Waiting", running: "Running", completed: "Ready", failed: "Stopped"};
+const statusLabels = {queued: "Waiting", running: "Running", checking: "Processing on Facebook", completed: "Ready", failed: "Stopped"};
 const knownJobs = new Map(JSON.parse(sessionStorage.getItem("studio-queue-status") || "[]"));
 let queueSnapshot = [];
 let queueRequest;
@@ -56,7 +56,7 @@ function taskStages(job, history) {
         const done = index < current || job.status === "completed";
         const state = done ? "Done" : reached ? (job.status === "failed" ? "Stopped" : "In progress") : "Remaining";
         const step = element("li", done ? "complete" : "");
-        if (reached && job.status === "running") step.setAttribute("aria-current", "step");
+        if (reached && (job.status === "running" || job.status === "checking")) step.setAttribute("aria-current", "step");
         const stepState = element("span", "step-state", state);
         const events = history.filter(event => event.phase === phase && Number.isFinite(event.started_at));
         if (events.length) {
@@ -86,11 +86,12 @@ function queueCard(job, historyOpen) {
     const times = taskTimes(job);
     if (times.childElementCount) card.append(times);
     const history = job.activity.map((event, index) => ({
-        ...event, end: job.activity[index + 1]?.started_at || job.finished_at,
+        ...event, end: event.ended_at || job.activity[index + 1]?.started_at || job.finished_at,
     }));
 
     const current = element("div", "queue-current");
-    if (job.status === "running") {
+    const inProgress = job.status === "running" || job.status === "checking";
+    if (inProgress) {
         const measured = Number.isFinite(job.progress);
         const line = element("div", "queue-current-heading");
         line.append(element("strong", null, job.stage));
@@ -110,7 +111,7 @@ function queueCard(job, historyOpen) {
         const activity = element("details", "queue-activity");
         activity.open = historyOpen;
         const events = element("ol");
-        if (job.status !== "running" && history.some(event => Number.isFinite(event.started_at))) {
+        if (!inProgress && history.some(event => Number.isFinite(event.started_at))) {
             activity.append(taskStages(job, history));
         }
         for (const event of history) {
@@ -131,6 +132,22 @@ function queueCard(job, historyOpen) {
     }
     if (job.status === "completed" || job.status === "failed") {
         const actions = element("div", "queue-view");
+        if (job.can_retry) {
+            const resume = action("Resume upload", async () => {
+                resume.disabled = true;
+                try {
+                    const result = await api("/api/job/" + encodeURIComponent(job.job_id) + "/resume", {method: "POST"});
+                    trackSubmittedJob(result.job_id);
+                    await refreshQueueAfterRemoval(job.job_id);
+                    openTasks(result.job_id);
+                } catch (error) {
+                    message("queue-error", error.message);
+                    resume.disabled = false;
+                }
+            }, "refresh");
+            resume.dataset.queueControl = "resume";
+            actions.append(resume);
+        }
         if (publishResultUrl(job)) {
             const view = link("View upload", publishResultUrl(job), "arrow");
             view.dataset.queueControl = "upload";
@@ -199,9 +216,11 @@ function renderLatestQueue() {
 }
 
 function renderQueue() {
-    const active = queueSnapshot.filter((job) => job.status === "queued" || job.status === "running");
+    const active = queueSnapshot.filter((job) => !["completed", "failed"].includes(job.status));
     const waiting = active.filter((job) => job.status === "queued").length;
-    const summary = active.length ? (active.length - waiting) + " running · " + waiting + " waiting" : "No active tasks";
+    const checking = active.filter((job) => job.status === "checking").length;
+    const summary = active.length ? (active.length - waiting - checking) + " running · " + waiting + " waiting"
+        + (checking ? " · " + checking + " processing on Facebook" : "") : "No active tasks";
     const count = byId("tasks-count");
     count.textContent = active.length > 99 ? "99+" : active.length;
     count.hidden = !active.length;
@@ -252,7 +271,7 @@ async function loadQueue() {
     const results = jobs.filter((job) => job.status === "completed" || job.status === "failed");
     const finished = results.filter((job) => {
         const previous = knownJobs.get(job.job_id);
-        return previous === "queued" || previous === "running"
+        return previous === "queued" || previous === "running" || previous === "checking"
             || (!previous && job.finished_at > latestFinishedAt);
     });
     for (const job of results) latestFinishedAt = Math.max(latestFinishedAt, job.finished_at || 0);

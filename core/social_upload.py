@@ -7,11 +7,14 @@ import secrets
 import threading
 import time
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from urllib.parse import urlencode, urlsplit
 
 import requests
 
+from core.job_queue import JobDeferred
 from core.publisher import write_clip_metadata
+from core.transformer import CPU_ENCODER, get_ffmpeg_cmd, run_encoder
 
 
 PLATFORMS = {"youtube": "YouTube", "instagram": "Instagram", "facebook": "Facebook"}
@@ -31,6 +34,7 @@ YOUTUBE_SCOPES = (
     "https://www.googleapis.com/auth/youtube.readonly",
 )
 CHUNK_SIZE = 8 * 1024 * 1024
+FACEBOOK_CHECK_DELAY = 30
 
 
 class PublishError(Exception):
@@ -225,6 +229,30 @@ class PublishStore:
         directory.mkdir(parents=True, exist_ok=True)
         write_clip_metadata(directory / (key + ".json"), receipt)
 
+    def facebook_upload_copy(self, video, duration, size, copy, report):
+        if copy.is_file():
+            return True
+        if not duration or size < 25_000_000 or size * 8 / duration <= 7_000_000:
+            return False
+        report("export", "Preparing Facebook upload copy", "Reducing the file size while keeping the exported video.", 0)
+        with NamedTemporaryFile(dir=copy.parent, suffix=".mp4", delete=False) as placeholder:
+            temporary = Path(placeholder.name).resolve()
+        try:
+            command = [get_ffmpeg_cmd(), "-hide_banner", "-loglevel", "error", "-y", "-i", str(video.resolve()),
+                       "-map", "0:v:0", "-map", "0:a:0?", *CPU_ENCODER,
+                       "-pix_fmt", "yuv420p", "-maxrate", "4M", "-bufsize", "8M",
+                       "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(temporary)]
+            progress = lambda percent: report("export", "Preparing Facebook upload copy", "Encoding a smaller MP4.", percent)
+            result, _ = run_encoder(command, copy.parent, duration, progress)
+            if result == 0 and 0 < temporary.stat().st_size < size:
+                temporary.replace(copy)
+                return True
+        except OSError:
+            pass
+        finally:
+            temporary.unlink(missing_ok=True)
+        return False
+
     def upload(self, payload, video, update):
         platform, key = payload["platform"], payload["key"]
         receipt = self.receipt(key)
@@ -242,26 +270,47 @@ class PublishStore:
             receipt.update(values)
             self.save_receipt(key, receipt)
 
-        with video.open("rb") as media:
-            info = os.fstat(media.fileno())
-            if str(info.st_mtime_ns) != payload["revision"] or not info.st_size:
-                raise PublishError("This export changed. Reopen the clip library and select the current version.")
+        source = video
+        info = video.stat()
+        if str(info.st_mtime_ns) != payload["revision"] or not info.st_size:
+            raise PublishError("This export changed. Reopen the clip library and select the current version.")
+        copy = self.directory / "uploads" / (key + ".mp4")
+        if not (platform == "facebook" and receipt.get("finish_accepted")):
             update("source", "Authorizing destination", account["name"])
+        if platform == "facebook":
+            if not receipt.get("video_id") and self.facebook_upload_copy(
+                video, payload.get("facebook_duration"), info.st_size, copy, update,
+            ):
+                checkpoint(optimized=True)
+            if receipt.get("optimized"):
+                if not copy.is_file():
+                    raise PublishError("The saved Facebook upload copy is missing. Export a new version to start a new upload.")
+                source = copy
+        with source.open("rb") as media:
+            opened = os.fstat(media.fileno())
+            if source == video and str(opened.st_mtime_ns) != payload["revision"]:
+                raise PublishError("This export changed. Reopen the clip library and select the current version.")
+            size = opened.st_size
             if platform == "youtube":
                 token = json_response(http("POST", GOOGLE_TOKEN, data=account["client"] | {
                     "refresh_token": account["refresh_token"], "grant_type": "refresh_token",
                 })).get("access_token")
                 if not token:
                     raise PublishError("Google did not return an upload token. Reconnect YouTube.")
-                url = youtube_upload(media, info.st_size, token, receipt, checkpoint, update)
+                url = youtube_upload(media, size, token, receipt, checkpoint, update)
             elif platform == "facebook":
                 uploader = facebook_page_video_upload if payload.get("facebook_page_video") else facebook_upload
-                url = uploader(media, info.st_size, account["id"], saved["meta"]["token"], receipt, checkpoint, update)
+                url = uploader(media, size, account["id"], saved["meta"]["token"], receipt, checkpoint, update)
             else:
-                url = instagram_upload(media, info.st_size, account["id"], saved["meta"]["token"],
+                url = instagram_upload(media, size, account["id"], saved["meta"]["token"],
                                        receipt, checkpoint, update)
         completed = {"complete": True, "url": url}
         self.save_receipt(key, completed)
+        if receipt.get("optimized"):
+            try:
+                copy.unlink(missing_ok=True)
+            except OSError:
+                pass
         return completed
 
 
@@ -335,7 +384,7 @@ def youtube_result(response):
 
 def meta_transfer(media, size, url, token, update, offset=0):
     media.seek(offset)
-    update("export", "Uploading MP4", "Sending video to Meta.", int(offset * 100 / size) if offset else None)
+    update("export", "Uploading MP4", f"Sending {size / 1_000_000:.1f} MB to Meta.", int(offset * 100 / size) if offset else None)
     response = http("POST", upload_location(url, "rupload.facebook.com"), token=token, scheme="OAuth",
                     headers={"offset": str(offset), "file_size": str(size), "Content-Type": "application/octet-stream",
                              "Content-Length": str(size - offset)}, data=media)
@@ -351,6 +400,8 @@ def facebook_upload(media, size, page_id, token, receipt, checkpoint, update):
         video_id = service_id(session.get("video_id"))
         checkpoint(video_id=video_id, session=upload_location(session.get("upload_url"), "rupload.facebook.com"))
         status = {}
+    elif receipt.get("finish_accepted"):
+        return facebook_confirmation(video_id, token, update)
     else:
         status = graph("GET", video_id, token, params={"fields": "status"}).get("status", {})
     publishing = status.get("publishing_phase", {})
@@ -362,25 +413,16 @@ def facebook_upload(media, size, page_id, token, receipt, checkpoint, update):
             if offset < size and uploading.get("status") not in {"complete", "completed"}:
                 meta_transfer(media, size, receipt["session"], token, update, offset)
             checkpoint(transferred=True)
-        update("finalize", "Publishing Reel", "Waiting for Facebook to confirm publication.")
-        if publishing.get("status") != "in_progress" and not receipt.get("finish_accepted"):
+        update("finalize", "Confirming Facebook publication", "Waiting for Facebook to confirm publication.")
+        if publishing.get("status") != "in_progress":
             meta = receipt["submission"]
             result = graph("POST", endpoint, token, data={"upload_phase": "finish", "video_id": video_id,
                            "video_state": "PUBLISHED", "title": meta["title"], "description": meta["description"],
                            "is_ai_generated": str(meta["synthetic_media"]).lower()})
             if result.get("success") is not True:
                 raise PublishError("Facebook did not accept the publish request. Check the connected Page and retry.")
-            checkpoint(finish_accepted=True)
-        for _ in range(15):
-            status = graph("GET", video_id, token, params={"fields": "status"}).get("status", {})
-            publishing = status.get("publishing_phase", {})
-            if publishing.get("publish_status") == "published":
-                break
-            if "error" in (status.get("video_status"), publishing.get("status"), publishing.get("publish_status")):
-                raise PublishError("Facebook could not process this Reel. Check its format and Page settings.")
-            time.sleep(4)
-        else:
-            raise PublishError("Facebook is still processing the Reel. Retry to check its status.")
+        checkpoint(finish_accepted=True)
+        return facebook_confirmation(video_id, token, update)
     return f"https://www.facebook.com/reel/{video_id}"
 
 
@@ -399,7 +441,8 @@ def facebook_page_video_upload(media, size, page_id, token, receipt, checkpoint,
         chunk = media.read(end - start)
         if len(chunk) != end - start:
             raise PublishError("The local MP4 ended before Facebook received the complete file.")
-        update("export", "Uploading MP4", "Sending the full clip to the Facebook Page.", int(start * 100 / size))
+        detail = f"{start / 1_000_000:.1f} of {size / 1_000_000:.1f} MB sent to Facebook."
+        update("export", "Uploading MP4", detail, int(start * 100 / size))
         result = json_response(http("POST", endpoint, token=token, data={
             "upload_phase": "transfer", "upload_session_id": session, "start_offset": start,
         }, files={"video_file_chunk": ("chunk.mp4", chunk, "application/octet-stream")}))
@@ -411,8 +454,8 @@ def facebook_page_video_upload(media, size, page_id, token, receipt, checkpoint,
     if start != size:
         raise PublishError("Facebook did not confirm the complete video transfer.")
 
-    update("finalize", "Publishing Page video", "Waiting for Facebook to confirm processing.")
     if not receipt.get("finish_accepted"):
+        update("finalize", "Confirming Facebook publication", "Waiting for Facebook to confirm publication.")
         meta = receipt["submission"]
         description = meta["description"]
         if meta["synthetic_media"]:
@@ -425,16 +468,26 @@ def facebook_page_video_upload(media, size, page_id, token, receipt, checkpoint,
             raise PublishError("Facebook did not accept the Page video publish request.")
         checkpoint(finish_accepted=True)
 
-    video_id = receipt["video_id"]
-    for _ in range(15):
-        video = graph("GET", video_id, token, params={"fields": "status"})
-        status = video.get("status", {}).get("video_status")
-        if status == "ready":
-            return f"https://www.facebook.com/watch/?v={video_id}"
-        if status == "error":
-            raise PublishError("Facebook could not process this Page video. Check the uploaded file in Facebook.")
-        time.sleep(4)
-    raise PublishError("Facebook is still processing this Page video. Retry to check the same upload.")
+    return facebook_confirmation(receipt["video_id"], token, update, page_video=True)
+
+
+def facebook_confirmation(video_id, token, update, *, page_video=False):
+    video = graph("GET", video_id, token, params={"fields": "status,published,permalink_url"})
+    status = video.get("status", {})
+    publishing = status.get("publishing_phase", {})
+    if video.get("published") is True or publishing.get("publish_status") == "published":
+        if page_video:
+            try:
+                return upload_location(video.get("permalink_url"), "www.facebook.com")
+            except PublishError:
+                return f"https://www.facebook.com/watch/?v={video_id}"
+        return f"https://www.facebook.com/reel/{video_id}"
+    if "error" in (status.get("video_status"), publishing.get("status"), publishing.get("publish_status")):
+        raise PublishError("Facebook could not process this video. Check the upload in Facebook before sharing again.")
+    percent = status.get("processing_progress")
+    progress = percent if type(percent) is int and 0 <= percent <= 100 else None
+    update("finalize", "Confirming Facebook publication", "The MP4 is on Facebook. The studio will check again automatically.", progress)
+    raise JobDeferred(FACEBOOK_CHECK_DELAY)
 
 
 def facebook_video_offsets(result, size):

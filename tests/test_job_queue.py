@@ -6,7 +6,7 @@ import unittest
 from contextlib import closing
 from pathlib import Path
 
-from core.job_queue import DuplicateJob, JobQueue
+from core.job_queue import DuplicateJob, JobDeferred, JobQueue
 
 
 class JobQueueTests(unittest.TestCase):
@@ -18,6 +18,41 @@ class JobQueueTests(unittest.TestCase):
                 return job
             time.sleep(0.02)
         self.fail(f"Job {job_id} did not reach {status}: {queue.get(job_id)}")
+
+    def test_deferred_upload_releases_worker_and_retry_keeps_task_and_checkpoint(self):
+        with tempfile.TemporaryDirectory() as temp:
+            queue = JobQueue(Path(temp) / "jobs.sqlite3")
+            attempts = []
+
+            def processor(job_id, request, _settings):
+                if request["source_type"] != "publish":
+                    return 1
+                attempts.append(request["key"])
+                queue.report(job_id, "finalize", "Confirming upload", "Checking Facebook.")
+                if len(attempts) == 1:
+                    raise JobDeferred(60)
+                if len(attempts) == 2:
+                    raise ValueError("Reconnect the account.")
+                return {"batch_id": "batch", "url": "https://www.facebook.com/watch/?v=222"}
+
+            queue.start(processor)
+            try:
+                job_id = queue.submit("Facebook", {"source_type": "publish", "key": "same-checkpoint"}, {})
+                self.wait_for_status(queue, job_id, "checking")
+                other = queue.submit("New render", {"source_type": "url"}, {})
+                self.wait_for_status(queue, other, "completed")
+                with queue._db() as db:
+                    db.execute("UPDATE jobs SET next_check_at=0 WHERE job_id=?", (job_id,))
+                with self.assertLogs("core.job_queue", level="ERROR"):
+                    queue._wake.set()
+                    self.assertTrue(self.wait_for_status(queue, job_id, "failed")["can_retry"])
+                self.assertTrue(queue.retry_publish(job_id))
+                job = self.wait_for_status(queue, job_id, "completed")
+                self.assertEqual(attempts, ["same-checkpoint"] * 3)
+                self.assertEqual(job["activity"][-1]["phase"], "finalize")
+                self.assertFalse(queue.retry_publish(job_id))
+            finally:
+                queue.stop()
 
     def test_accepts_more_jobs_while_running_and_continues_after_failure(self):
         with tempfile.TemporaryDirectory() as temp:

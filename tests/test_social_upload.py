@@ -9,7 +9,7 @@ from urllib.parse import parse_qs, urlparse
 from fastapi.testclient import TestClient
 
 import app
-from core.job_queue import JobQueue
+from core.job_queue import JobDeferred, JobQueue
 from core.social_upload import (
     GOOGLE_TOKEN, META, META_VIDEO, YOUTUBE_SCOPES, PublishError, PublishStore, facebook_page_video_upload,
     facebook_upload, instagram_upload, youtube_upload,
@@ -150,7 +150,7 @@ class SocialUploadTests(unittest.TestCase):
             response(body={"start_offset": "3", "end_offset": "6"}),
             response(body={"start_offset": "6", "end_offset": "6"}),
             response(body={"success": True}),
-            response(body={"status": {"video_status": "ready"}}),
+            response(body={"status": {"video_status": "ready"}, "published": True}),
         ]) as call:
             result = facebook_page_video_upload(io.BytesIO(b"abcdef"), 6, "123", "page-token", receipt, checkpoint, Mock())
         self.assertEqual(call.call_args_list[0].args[1], META_VIDEO + "/123/videos")
@@ -158,6 +158,52 @@ class SocialUploadTests(unittest.TestCase):
         self.assertEqual(call.call_args_list[2].kwargs["files"]["video_file_chunk"][1], b"def")
         self.assertEqual(call.call_args_list[3].kwargs["data"]["published"], "true")
         self.assertEqual(result, "https://www.facebook.com/watch/?v=222")
+
+    def test_facebook_processing_rechecks_same_page_video_without_sending_bytes(self):
+        receipt = {"page_video_session": "111", "video_id": "222", "offsets": [6, 6], "finish_accepted": True}
+        with patch("core.social_upload.http", side_effect=[
+            response(body={"status": {"video_status": "ready"}, "published": False}),
+            response(body={"status": {"video_status": "ready"}, "published": True,
+                           "permalink_url": "https://www.facebook.com/SnapOdd/videos/222/"}),
+        ]) as call:
+            with self.assertRaises(JobDeferred):
+                facebook_page_video_upload(None, 6, "123", "page-token", receipt, Mock(), Mock())
+            url = facebook_page_video_upload(None, 6, "123", "page-token", receipt, Mock(), Mock())
+        self.assertEqual(url, "https://www.facebook.com/SnapOdd/videos/222/")
+        self.assertEqual([request.args[0] for request in call.call_args_list], ["GET", "GET"])
+
+    def test_facebook_retains_the_smaller_copy_until_the_upload_is_confirmed(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = PublishStore(root / "publishing")
+            store.save_connection("meta", {"token": "page-token", "facebook": {"id": "123", "name": "SnapOdd"}})
+            video = root / "clip.mp4"
+            with video.open("wb") as media:
+                media.truncate(30_000_000)
+            payload = {"platform": "facebook", "key": "upload", "account_id": "123", "facebook_duration": 20,
+                       "revision": str(video.stat().st_mtime_ns), "submission": {}}
+
+            def encoder(command, *_):
+                Path(command[-1]).write_bytes(b"smaller mp4")
+                return 0, ""
+
+            def upload(media, size, _page, _token, _receipt, checkpoint, _update):
+                self.assertEqual(media.read(), b"smaller mp4")
+                self.assertEqual(size, 11)
+                if not _receipt.get("video_id"):
+                    checkpoint(video_id="222", finish_accepted=True)
+                    raise JobDeferred(30)
+                return "https://www.facebook.com/reel/222"
+
+            with patch("core.social_upload.run_encoder", side_effect=encoder) as encode, \
+                    patch("core.social_upload.facebook_upload", side_effect=upload):
+                with self.assertRaises(JobDeferred):
+                    store.upload(payload, video, Mock())
+                self.assertTrue((store.directory / "uploads" / "upload.mp4").is_file())
+                self.assertTrue(store.upload(payload, video, Mock())["complete"])
+                encode.assert_called_once()
+            self.assertEqual(video.stat().st_size, 30_000_000)
+            self.assertFalse((store.directory / "uploads" / "upload.mp4").exists())
 
     def test_worker_routes_an_export_over_ninety_seconds_to_page_video(self):
         payload = {"source_type": "publish", "platform": "facebook", "folder": "batch", "filename": "clip-01.mp4"}
@@ -232,6 +278,14 @@ class SocialUploadTests(unittest.TestCase):
                 self.assertFalse(queue.has_work())
                 self.assertCountEqual([(job["kind"], job["status"]) for job in queue.snapshot()],
                                       [("publish", "completed"), ("publish", "completed"), ("publish", "failed")])
+                facebook = next(item for item in queued.json()["uploads"] if item["platform"] == "facebook")
+                resume_url = "/api/job/" + facebook["job_id"] + "/resume"
+                self.assertEqual(client.post(resume_url, headers={"Origin": "https://elsewhere.test"}).status_code, 403)
+                self.assertEqual(client.post(resume_url).json(), {"job_id": facebook["job_id"]})
+                deadline = time.monotonic() + 5
+                while queue.has_work() and time.monotonic() < deadline:
+                    time.sleep(.02)
+                self.assertEqual(queue.get(facebook["job_id"])["status"], "failed")
                 retry = client.post(url, json=body).json()["uploads"]
                 self.assertEqual({item["platform"]: item["status"] for item in retry},
                                  {"youtube": "uploaded", "instagram": "uploaded", "facebook": "queued"})

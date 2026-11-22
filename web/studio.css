@@ -281,6 +281,7 @@ input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: var
 .task-clock { font-variant-numeric: tabular-nums; font-weight: 650; white-space: nowrap; }
 .queue-card .queue-status { background: #eee7df; border-radius: 5px; padding: 2px 6px; color: var(--ink); font-size: .73rem; font-weight: 700; white-space: nowrap; }
 .queue-card.running .queue-status { background: var(--accent); }
+.queue-card.checking .queue-status { background: #eee7fa; color: #4c3567; }
 .queue-card.completed .queue-status { background: #ecf3d8; color: #405715; }
 .queue-card.failed .queue-status { background: #f6e6e4; color: var(--error); }
 .queue-steps { display: grid; gap: 4px; margin: 6px 0 2px; padding: 0; list-style: none; }

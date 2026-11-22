@@ -16,6 +16,7 @@ class StudioLaunchTests(unittest.TestCase):
                 "/api/posting-kit/{folder_name}/{filename}/hashtags": {"post": {}},
                 "/api/publishing": {"get": {}},
                 "/api/publishing/meta/pages": {"post": {}},
+                "/api/job/{job_id}/resume": {"post": {}},
             },
         }
 

@@ -340,7 +340,7 @@ def submit_publication(folder_name, batch):
             if platform == "youtube":
                 submission.update(visibility=batch.visibility, made_for_kids=batch.made_for_kids)
             if any(receipt.get(field) for field in ("session", "video_id", "container")) and receipt["submission"] != submission:
-                raise PublishError(f"{video.name} has a {PLATFORMS[platform]} upload in progress. Use its original posting details to resume.")
+                raise PublishError(f"{video.name} already has a {PLATFORMS[platform]} upload. Open Tasks to check or resume it with its original posting details.")
             jobs.append({"source_type": "publish", "key": key, "platform": platform, "account_id": account_id,
                          "folder": video.parent.name, "filename": video.name, "revision": clip.revision, "submission": submission})
 
@@ -1172,7 +1172,7 @@ def process_job(job_id, payload, preferences):
         nonlocal last_report, last_update
         now = time.monotonic()
         report = (phase, stage, detail, progress, source)
-        updating_percent = progress is not None and last_report and last_report[3] is not None
+        updating_percent = progress is not None and last_report and last_report[:2] == report[:2] and last_report[3] is not None
         if report == last_report or (updating_percent and now - last_update < 1):
             return
         JOB_QUEUE.report(job_id, phase, stage, detail, progress, source)
@@ -1187,6 +1187,7 @@ def process_job(job_id, payload, preferences):
             raise PublishError("The clip was removed before its upload started.") from None
         if payload["platform"] == "facebook":
             duration, _ = inspect_media(video)
+            payload["facebook_duration"] = duration
             payload["facebook_page_video"] = not 3 <= duration <= FACEBOOK_REEL_MAX_SECONDS
         receipt = PUBLISHING.upload(payload, video, update)
         return {"url": receipt["url"], "batch_id": batch_task_id(video.parent, read_json(video.parent / "info.json"))}
@@ -1393,6 +1394,16 @@ def dismiss_job(job_id: str):
     return {"status": "ok"}
 
 
+@app.post("/api/job/{job_id}/resume")
+def resume_upload(job_id: str, _origin: str = Depends(publishing_origin)):
+    try:
+        if JOB_QUEUE.retry_publish(job_id):
+            return {"job_id": job_id}
+    except DuplicateJob as error:
+        return {"job_id": error.job_id}
+    raise HTTPException(409, "This task has no saved upload to resume.")
+
+
 def launch_studio(open_browser=False):
     host, port = "127.0.0.1", 8000
     url = f"http://{host}:{port}"
@@ -1415,6 +1426,7 @@ def launch_studio(open_browser=False):
             "/api/posting-kit/{folder_name}/{filename}/hashtags",
             "/api/publishing",
             "/api/publishing/meta/pages",
+            "/api/job/{job_id}/resume",
         }
         if not response.ok or not required_routes.issubset(paths):
             print(f"Port {port} is in use by an older studio or another app. Close it before launching this version.")

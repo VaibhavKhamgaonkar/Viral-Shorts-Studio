@@ -32,13 +32,14 @@ CREATE TABLE IF NOT EXISTS jobs (
     finished_at REAL,
     result_batch_id TEXT,
     kind TEXT NOT NULL DEFAULT 'clip',
-    result_url TEXT
+    result_url TEXT,
+    next_check_at REAL
 )
 """
 
 PUBLIC_FIELDS = (
     "job_id, source, status, phase, stage, detail, progress, activity, clip_count, queued_at, started_at, finished_at, "
-    "result_batch_id, kind, result_url"
+    "result_batch_id, kind, result_url, (kind='publish' AND status='failed' AND request<>'{}') AS can_retry"
 )
 
 
@@ -46,6 +47,11 @@ class DuplicateJob(Exception):
     def __init__(self, job_id):
         super().__init__(job_id)
         self.job_id = job_id
+
+
+class JobDeferred(Exception):
+    def __init__(self, delay):
+        self.delay = delay
 
 
 class JobQueue:
@@ -82,7 +88,7 @@ class JobQueue:
             with self._db() as db:
                 db.execute(SCHEMA)
                 columns = {column["name"] for column in db.execute("PRAGMA table_info(jobs)")}
-                for column in ("queued_at", "started_at", "updated_at", "result_batch_id"):
+                for column in ("queued_at", "started_at", "updated_at", "result_batch_id", "next_check_at"):
                     if column not in columns:
                         column_type = "TEXT" if column == "result_batch_id" else "REAL"
                         db.execute(f"ALTER TABLE jobs ADD COLUMN {column} {column_type}")
@@ -91,7 +97,8 @@ class JobQueue:
                 if "result_url" not in columns:
                     db.execute("ALTER TABLE jobs ADD COLUMN result_url TEXT")
                 db.execute(
-                    "UPDATE jobs SET status='failed', detail=?, progress=NULL, finished_at=COALESCE(updated_at, ?), request='{}', "
+                    "UPDATE jobs SET status='failed', detail=?, progress=NULL, finished_at=COALESCE(updated_at, ?), "
+                    "request=CASE WHEN kind='publish' THEN request ELSE '{}' END, "
                     "settings='{}', source_file='' WHERE status='running'",
                     ("The studio stopped before this task finished. Submit it again to retry.", time.time()),
                 )
@@ -116,7 +123,7 @@ class JobQueue:
             if identity:
                 key = identity(request, settings)
                 for active in db.execute(
-                    "SELECT job_id, request, settings FROM jobs WHERE status IN ('queued','running') ORDER BY sequence"
+                    "SELECT job_id, request, settings FROM jobs WHERE status IN ('queued','running','checking') ORDER BY sequence"
                 ):
                     if identity(json.loads(active["request"]), json.loads(active["settings"])) == key:
                         raise DuplicateJob(active["job_id"])
@@ -131,6 +138,30 @@ class JobQueue:
         self._wake.set()
         return job_id
 
+    def retry_publish(self, job_id):
+        with self.gate, self._db() as db:
+            row = db.execute(
+                "SELECT request, activity, finished_at FROM jobs WHERE job_id=? AND kind='publish' "
+                "AND status='failed' AND request<>'{}'", (job_id,),
+            ).fetchone()
+            if not row:
+                return False
+            duplicate = db.execute(
+                "SELECT job_id FROM jobs WHERE status IN ('queued','running','checking') AND kind='publish' "
+                "AND json_extract(request, '$.key')=?", (json.loads(row["request"])["key"],),
+            ).fetchone()
+            if duplicate:
+                raise DuplicateJob(duplicate["job_id"])
+            activity = json.loads(row["activity"])
+            if activity and row["finished_at"]:
+                activity[-1]["ended_at"] = row["finished_at"]
+            db.execute(
+                "UPDATE jobs SET status='queued', detail='Waiting to resume the upload.', activity=?, "
+                "finished_at=NULL, next_check_at=NULL WHERE job_id=?", (json.dumps(activity), job_id),
+            )
+        self._wake.set()
+        return True
+
     def _work(self, processor, owner):
         with owner:
             self._drain(processor)
@@ -138,14 +169,21 @@ class JobQueue:
     def _drain(self, processor):
         while not self._stop.is_set():
             self._wake.clear()
+            wait = None
             with self.gate, self._db() as db:
                 job = None
                 if not self._stop.is_set():
-                    job = db.execute(
-                        "SELECT job_id, request, settings, kind FROM jobs WHERE status='queued' ORDER BY sequence LIMIT 1"
-                    ).fetchone()
-                if job:
                     now = time.time()
+                    job = db.execute(
+                        "SELECT job_id, request, settings, kind, started_at FROM jobs WHERE status='queued' "
+                        "OR (status='checking' AND next_check_at<=?) "
+                        "ORDER BY CASE WHEN status='checking' THEN 0 ELSE 1 END, sequence LIMIT 1", (now,),
+                    ).fetchone()
+                    if not job:
+                        due = db.execute("SELECT MIN(next_check_at) FROM jobs WHERE status='checking'").fetchone()[0]
+                        if due is not None:
+                            wait = max(0, due - now)
+                if job and job["started_at"] is None:
                     event = {
                         "phase": "source", "stage": "Preparing upload" if job["kind"] == "publish" else "Preparing source",
                         "detail": "Opening the export." if job["kind"] == "publish" else "Opening the video source.",
@@ -156,8 +194,10 @@ class JobQueue:
                         "WHERE job_id=?",
                         (event["phase"], event["stage"], event["detail"], json.dumps([event]), now, now, job["job_id"]),
                     )
+                elif job:
+                    db.execute("UPDATE jobs SET status='running', updated_at=? WHERE job_id=?", (now, job["job_id"]))
             if not job:
-                self._wake.wait()
+                self._wake.wait(wait)
                 continue
 
             job_id = job["job_id"]
@@ -169,6 +209,10 @@ class JobQueue:
                     count, batch_id = result if isinstance(result, tuple) else (result, None)
                     detail = f"{count} clip{'s' if count != 1 else ''} ready in the library."
                     self._finish(job_id, "completed", detail, count, batch_id)
+            except JobDeferred as pending:
+                with self._db() as db:
+                    db.execute("UPDATE jobs SET status='checking', next_check_at=? WHERE job_id=?",
+                               (time.time() + pending.delay, job_id))
             except Exception as error:
                 logger.exception("Studio task %s failed", job_id)
                 self._finish(job_id, "failed", str(error) or type(error).__name__, 0)
@@ -179,7 +223,7 @@ class JobQueue:
             activity = json.loads(row["activity"])
             previous = activity[-1] if activity else None
             now = time.time()
-            if not previous or (previous.get("phase"), previous["stage"]) != (phase, stage):
+            if not previous or previous.get("ended_at") or (previous.get("phase"), previous["stage"]) != (phase, stage):
                 activity.append({"phase": phase, "stage": stage, "detail": detail, "started_at": now})
             elif progress is None:
                 previous["detail"] = detail
@@ -192,9 +236,10 @@ class JobQueue:
     def _finish(self, job_id, status, detail, count, batch_id=None, url=None):
         with self._db() as db:
             db.execute(
-                "UPDATE jobs SET status=?, detail=?, progress=NULL, clip_count=?, finished_at=?, result_batch_id=?, result_url=?, request='{}', "
+                "UPDATE jobs SET status=?, detail=?, progress=NULL, clip_count=?, finished_at=?, result_batch_id=?, result_url=?, "
+                "request=CASE WHEN kind='publish' AND ?='failed' THEN request ELSE '{}' END, next_check_at=NULL, "
                 "settings='{}', source_file='' WHERE job_id=?",
-                (status, detail[:1200], count, time.time(), batch_id, url, job_id),
+                (status, detail[:1200], count, time.time(), batch_id, url, status, job_id),
             )
 
     @staticmethod
@@ -204,8 +249,8 @@ class JobQueue:
     def snapshot(self):
         with self._db() as db:
             active = db.execute(
-                f"SELECT {PUBLIC_FIELDS} FROM jobs WHERE status IN ('running','queued') "
-                "ORDER BY CASE status WHEN 'running' THEN 0 ELSE 1 END, sequence"
+                f"SELECT {PUBLIC_FIELDS} FROM jobs WHERE status IN ('running','queued','checking') "
+                "ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'checking' THEN 1 ELSE 2 END, sequence"
             ).fetchall()
             recent = db.execute(
                 f"SELECT {PUBLIC_FIELDS} FROM jobs WHERE status IN ('completed','failed') "
@@ -234,7 +279,7 @@ class JobQueue:
 
     def has_work(self):
         with self._db() as db:
-            return bool(db.execute("SELECT 1 FROM jobs WHERE status IN ('queued','running') LIMIT 1").fetchone())
+            return bool(db.execute("SELECT 1 FROM jobs WHERE status IN ('queued','running','checking') LIMIT 1").fetchone())
 
     def running_id(self):
         with self._db() as db:
