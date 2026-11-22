@@ -330,6 +330,39 @@ class SocialUploadTests(unittest.TestCase):
             self.assertEqual(http.call_args_list[4].kwargs["headers"]["file_size"], "12")
             self.assertEqual(video.read_bytes(), b"old MP4")
 
+    def test_instagram_replaces_the_failed_container_and_recovers_from_server_error(self):
+        old_uri = "https://rupload.facebook.com/ig-api-upload/v27.0/777"
+        new_uri = "https://rupload.facebook.com/ig-api-upload/v27.0/888"
+        receipt = {"container": "777", "instagram_uri": old_uri, "transferred": False,
+                   "submission": {"description": "Original caption", "synthetic_media": False}}
+        update = Mock()
+        with patch("core.social_upload.http", side_effect=[
+            response(body={"status_code": "ERROR", "status": "Error: Media upload has failed with error code 2207082"}),
+            response(body={"id": "888", "uri": new_uri}), response(500),
+            response(body={"status_code": "IN_PROGRESS"}), response(body={"offset": 6}),
+            response(body={"status_code": "FINISHED"}), response(body={"id": "999"}),
+            response(body={"permalink": "https://www.instagram.com/reel/posted/"}),
+        ]) as http:
+            with self.assertRaises(JobDeferred):
+                instagram_upload(io.BytesIO(b"abcdef"), 6, "123", "token", receipt, receipt.update, update)
+            self.assertEqual(receipt["container"], "888")
+            self.assertFalse(receipt["transferred"])
+            self.assertEqual(instagram_upload(None, 6, "123", "token", receipt, receipt.update, update),
+                             "https://www.instagram.com/reel/posted/")
+        self.assertEqual(http.call_args_list[1].kwargs["data"]["caption"], "Original caption")
+        self.assertEqual([call.args[0] for call in http.call_args_list if call.args[1] == new_uri], ["POST", "GET"])
+        self.assertFalse(any(call.args[1] == old_uri for call in http.call_args_list))
+
+    def test_instagram_automatic_transfer_retry_is_bounded(self):
+        uri = "https://rupload.facebook.com/ig-api-upload/v27.0/888"
+        receipt = {"container": "888", "instagram_uri": uri, "transfer_retries": 2}
+        with patch("core.social_upload.http", side_effect=[
+            response(body={"status_code": "IN_PROGRESS"}), response(body={"offset": 0}), response(500),
+        ]):
+            with self.assertRaisesRegex(PublishError, "Resume upload to try again"):
+                instagram_upload(io.BytesIO(b"abcdef"), 6, "123", "token", receipt, receipt.update, Mock())
+        self.assertEqual(receipt["transfer_retries"], 0)
+
     def test_instagram_resumes_at_server_offset_and_defers_processing(self):
         uri = "https://rupload.facebook.com/ig-api-upload/v27.0/888"
         receipt = {"container": "888", "instagram_uri": uri, "transferred": False}

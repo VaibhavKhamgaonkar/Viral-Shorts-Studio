@@ -167,6 +167,8 @@ Keep the token private. [Meta token selection](https://developers.facebook.com/d
 3. Click **Upload selected**. Each clip and destination gets a task. The studio prepares a smaller copy for large Facebook exports and an API-compatible MP4 copy for Instagram, leaving the library MP4 available. During platform processing, the studio checks the existing upload in the background so other tasks can continue. [Instagram Reel media specifications](https://developers.facebook.com/documentation/instagram-platform/instagram-graph-api/reference/ig-user/media#reels-specs)
 4. If an upload stops, open **Tasks → Resume upload**. It reuses the same task, posting details, and any saved platform checkpoint. **View upload** opens the confirmed platform result. Sharing the same export to the same account again skips confirmed uploads.
 
+For Instagram transfer errors, the studio checks how many bytes Meta retained before retrying. Temporary server errors get up to two automatic retries. If Instagram reports `2207082` on a failed upload session, the studio opens a new session using the same prepared MP4 and caption.
+
 Credentials and upload records are saved locally under `data/publishing/`, which Git ignores. Keep the OAuth JSON and Meta tokens private. **Disconnect** removes the local connection. Revoke app access on the platform itself to invalidate a grant there.
 
 ### Footage and music rights

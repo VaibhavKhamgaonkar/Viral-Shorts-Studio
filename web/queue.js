@@ -81,7 +81,7 @@ function queueCard(job, historyOpen) {
     card.setAttribute("aria-labelledby", title.id);
     name.append(title, element("code", null, "Task #" + job.job_id));
     const label = job.status === "queued" && job.position ? "Waiting · #" + job.position
-        : job.status === "checking" ? "Processing on " + job.source.split(" · ")[0]
+        : job.status === "checking" ? (job.phase === "export" ? "Retry scheduled" : "Processing on " + job.source.split(" · ")[0])
         : job.status === "completed" && job.kind === "publish" ? "Uploaded" : statusLabels[job.status];
     heading.append(name, element("span", "queue-status", label));
     card.append(heading);
@@ -228,7 +228,7 @@ function renderQueue() {
     const waiting = active.filter((job) => job.status === "queued").length;
     const checking = active.filter((job) => job.status === "checking").length;
     const summary = active.length ? (active.length - waiting - checking) + " running · " + waiting + " waiting"
-        + (checking ? " · " + checking + " processing on platform" : "") : "No active tasks";
+        + (checking ? " · " + checking + " awaiting platform" : "") : "No active tasks";
     const count = byId("tasks-count");
     count.textContent = active.length > 99 ? "99+" : active.length;
     count.hidden = !active.length;

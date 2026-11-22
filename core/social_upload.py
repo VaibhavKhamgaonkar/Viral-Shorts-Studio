@@ -48,6 +48,10 @@ class ExpiredConnection(PublishError):
     pass
 
 
+class InstagramTransferUnavailable(PublishError):
+    pass
+
+
 def http(method, url, *, token=None, scheme="Bearer", headers=None, timeout=(10, 120), **options):
     headers = dict(headers or {})
     if token:
@@ -480,12 +484,16 @@ def meta_transfer(media, size, url, token, update, offset=0):
     response = http("POST", upload_location(url, "rupload.facebook.com"), token=token, scheme="OAuth",
                     headers={"offset": str(offset), "file_size": str(size), "Content-Type": "application/octet-stream",
                              "Content-Length": str(size - offset)}, data=media)
-    if response.status_code == 400 and urlsplit(url).path.startswith("/ig-api-upload/"):
+    if urlsplit(url).path.startswith("/ig-api-upload/") and response.status_code >= 400:
+        if response.status_code >= 500 or response.status_code == 429:
+            raise InstagramTransferUnavailable(f"HTTP {response.status_code}")
         try:
             debug = response.json().get("debug_info", {})
         except (AttributeError, ValueError):
             debug = None
         if isinstance(debug, dict) and debug.get("type") == "ProcessingFailedError":
+            if debug.get("retriable") is True:
+                raise InstagramTransferUnavailable(f"HTTP {response.status_code}")
             raise PublishError("Instagram rejected the MP4 during transfer. Open Tasks and resume the upload to retry the saved copy.")
     if json_response(response).get("success") is not True:
         raise PublishError("Meta did not confirm the video transfer. Retry this task from the clip library.")
@@ -601,12 +609,16 @@ def facebook_video_offsets(result, size):
 
 def instagram_upload(media, size, account_id, token, receipt, checkpoint, update):
     container = receipt.get("container")
-    status = ""
+    state = {}
     if container:
-        status = graph("GET", container, token, params={"fields": "status_code"}).get("status_code")
-        if status == "PUBLISHED":
+        state = instagram_container_status(container, token)
+        if state.get("status_code") == "PUBLISHED":
             return ""
-    if not container or status == "EXPIRED":
+    status = state.get("status_code")
+    failed_transfer = instagram_failed_transfer(state)
+    if not container or status == "EXPIRED" or failed_transfer:
+        if failed_transfer:
+            update("export", "Renewing Instagram upload session", "Replacing the failed Instagram session (2207082).")
         result = graph("POST", account_id + "/media", token, data={"media_type": "REELS", "upload_type": "resumable",
                        "caption": receipt["submission"]["description"],
                        "is_ai_generated": str(receipt["submission"]["synthetic_media"]).lower()})
@@ -614,7 +626,7 @@ def instagram_upload(media, size, account_id, token, receipt, checkpoint, update
         uri = upload_location(result.get("uri"), "rupload.facebook.com")
         checkpoint(container=container, instagram_uri=uri, transferred=False, processing_checks=0)
         offset = 0
-        status = ""
+        state, status = {}, None
     else:
         uri = instagram_upload_uri(receipt)
         offset = None
@@ -624,11 +636,19 @@ def instagram_upload(media, size, account_id, token, receipt, checkpoint, update
         if offset is None:
             offset = instagram_offset(uri, token, size)
         if offset < size:
-            meta_transfer(media, size, uri, token, update, offset)
+            try:
+                meta_transfer(media, size, uri, token, update, offset)
+            except InstagramTransferUnavailable as error:
+                defer_instagram_transfer(receipt, checkpoint, update, str(error))
         checkpoint(transferred=True)
-        status = graph("GET", container, token, params={"fields": "status_code"}).get("status_code")
+        state = instagram_container_status(container, token)
+        status = state.get("status_code")
     if status == "PUBLISHED":
         return ""
+    if instagram_failed_transfer(state):
+        defer_instagram_transfer(receipt, checkpoint, update, "2207082")
+    if status == "FINISHED" and receipt.get("transfer_retries"):
+        checkpoint(transfer_retries=0)
     update("finalize", "Publishing Instagram Reel", "Waiting for Instagram to process the video.")
     if status in {"ERROR", "EXPIRED"}:
         raise PublishError("Instagram could not process this Reel. Check the export and try again.")
@@ -646,6 +666,24 @@ def instagram_upload(media, size, account_id, token, receipt, checkpoint, update
         return upload_location(permalink, "www.instagram.com")
     except PublishError:
         return ""
+
+
+def instagram_container_status(container, token):
+    return graph("GET", container, token, params={"fields": "status_code,status"})
+
+
+def instagram_failed_transfer(state):
+    return state.get("status_code") == "ERROR" and re.search(r"\b2207082\b", str(state.get("status", ""))) is not None
+
+
+def defer_instagram_transfer(receipt, checkpoint, update, code):
+    attempts = receipt.get("transfer_retries", 0)
+    if attempts >= 2:
+        checkpoint(transfer_retries=0)
+        raise PublishError(f"Instagram could not complete the transfer ({code}) after two automatic retries. Resume upload to try again.")
+    checkpoint(transfer_retries=attempts + 1)
+    update("export", "Instagram retry scheduled", f"Instagram reported {code}. The studio will check the saved upload before retrying.")
+    raise JobDeferred(30 * (attempts + 1))
 
 
 def instagram_upload_uri(receipt):
