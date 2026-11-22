@@ -208,13 +208,67 @@ function publishClipRow(clip, single) {
     description.value = postText(clip);
     description.maxLength = 5000;
     fields.append(publishField("Title", title), publishField("Description and hashtags", description));
-    row.append(choice, fields);
+    const feedback = element("p", "kit-muted publish-draft-feedback");
+    feedback.setAttribute("role", "status");
+    const keep = action("Use current copy", () => {
+        entry.useCurrent = true;
+        keep.hidden = true;
+        feedback.textContent = "Using the current title, description, and hashtags.";
+        updatePublication();
+    });
+    keep.hidden = true;
+    const draft = element("div", "publish-draft-state");
+    draft.append(feedback, keep);
+    row.append(choice, fields, draft);
+    const entry = {clip, row, input, title, description, feedback, keep, draft, refreshing: false, useCurrent: false};
+    title.addEventListener("input", () => { entry.titleEdited = true; });
+    description.addEventListener("input", () => { entry.descriptionEdited = true; });
     input.addEventListener("change", () => {
         fields.hidden = !input.checked;
+        draft.hidden = !input.checked;
         title.disabled = !input.checked;
         description.disabled = !input.checked;
     });
-    return {clip, row, input, title, description};
+    return entry;
+}
+
+async function refreshPublicationDrafts(state) {
+    for (const entry of state.clips) {
+        entry.refreshing = true;
+        entry.keep.hidden = false;
+        entry.feedback.textContent = "Waiting for a fresh AI draft…";
+    }
+    updatePublication();
+    for (const entry of state.clips) {
+        if (publication !== state || !publishDialog.open) break;
+        if (entry.useCurrent || !entry.input.checked) {
+            entry.refreshing = false;
+            entry.keep.hidden = true;
+            if (!entry.useCurrent) entry.feedback.textContent = "Draft from the clip library.";
+            updatePublication();
+            continue;
+        }
+        entry.feedback.textContent = "Refreshing the title, description, and hashtags…";
+        try {
+            const refreshed = await api(kitPath({folder: state.folder, clip: entry.clip}), jsonRequest("POST", {
+                notes: entry.clip.posting_notes || "", refresh_hashtags: true,
+            }));
+            Object.assign(entry.clip, refreshed);
+            if (publication !== state || !publishDialog.open || entry.useCurrent) continue;
+            if (!entry.titleEdited) entry.title.value = refreshed.title.slice(0, 100);
+            if (!entry.descriptionEdited) entry.description.value = postText(entry.clip);
+            entry.feedback.textContent = entry.titleEdited || entry.descriptionEdited
+                ? "Fresh draft ready. Your edits were kept." : "Fresh AI draft ready to review.";
+        } catch (error) {
+            if (publication === state && publishDialog.open && !entry.useCurrent) {
+                entry.feedback.textContent = error.message + " You can edit or use the current copy.";
+            }
+        } finally {
+            entry.refreshing = false;
+            entry.keep.hidden = true;
+            if (publication === state && publishDialog.open) updatePublication();
+        }
+    }
 }
 
 function updatePublication() {
@@ -223,10 +277,18 @@ function updatePublication() {
     const youtube = selected.includes("youtube");
     byId("publish-youtube-options").hidden = !youtube;
     byId("publish-audience").required = youtube;
-    byId("publish-meta-note").hidden = !selected.some(platform => platform !== "youtube");
+    const facebook = selected.includes("facebook");
+    const instagram = selected.includes("instagram");
+    const note = byId("publish-meta-note");
+    note.hidden = !facebook && !instagram;
+    note.textContent = [
+        facebook && "Facebook posts are public. Clips outside 3–90 seconds are sent as Page videos.",
+        instagram && "Instagram Reels use the connected account’s visibility.",
+    ].filter(Boolean).join(" ");
+    const awaitingDraft = publication.clips.some(entry => entry.input.checked && entry.refreshing && !entry.useCurrent);
     byId("publish-submit").disabled = publication.pending || !selected.length ||
         !publication.clips.some(({input}) => input.checked) || !byId("publish-rights").checked ||
-        (youtube && !byId("publish-audience").value);
+        awaitingDraft || (youtube && !byId("publish-audience").value);
 }
 
 async function openPublication(folder, clips) {
@@ -264,7 +326,7 @@ async function openPublication(folder, clips) {
         byId("publish-dialog-loading").hidden = true;
         byId("publish-dialog-settings").hidden = available.length === destinations.length;
         publishForm.hidden = false;
-        updatePublication();
+        void refreshPublicationDrafts(state);
     } catch (error) {
         if (publication !== state || !publishDialog.open) return;
         byId("publish-dialog-loading").textContent = error.message === "Not Found"

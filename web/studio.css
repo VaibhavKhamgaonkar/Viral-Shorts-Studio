@@ -412,6 +412,8 @@ input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: var
 .publish-clip-row .check, .publish-clip-fields .field > span { font-weight: 650; }
 .publish-clip-fields .field { align-content: start; font-size: .86rem; }
 .publish-clip-fields textarea { width: 100%; min-height: 65px; resize: vertical; font: inherit; color: var(--ink); background: var(--paper); border: 1px solid var(--line); padding: 8px; border-radius: 6px; }
+.publish-draft-state { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin: 0 0 8px; }
+.publish-draft-state .button { min-height: 30px; }
 .publish-consent .check { align-items: flex-start; margin-bottom: 5px; }
 .publish-consent input { margin-top: 3px; }
 #publish-meta-note { margin-bottom: 9px; }

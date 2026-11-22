@@ -24,6 +24,8 @@ YOUTUBE = "https://www.googleapis.com"
 GOOGLE_TOKEN = "https://oauth2.googleapis.com/token"
 META_VERSION = "v27.0"
 META = "https://graph.facebook.com/" + META_VERSION
+META_VIDEO = "https://graph-video.facebook.com/" + META_VERSION
+FACEBOOK_REEL_MAX_SECONDS = 90
 YOUTUBE_SCOPES = (
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube.readonly",
@@ -253,8 +255,8 @@ class PublishStore:
                     raise PublishError("Google did not return an upload token. Reconnect YouTube.")
                 url = youtube_upload(media, info.st_size, token, receipt, checkpoint, update)
             elif platform == "facebook":
-                url = facebook_upload(media, info.st_size, account["id"], saved["meta"]["token"],
-                                      receipt, checkpoint, update)
+                uploader = facebook_page_video_upload if payload.get("facebook_page_video") else facebook_upload
+                url = uploader(media, info.st_size, account["id"], saved["meta"]["token"], receipt, checkpoint, update)
             else:
                 url = instagram_upload(media, info.st_size, account["id"], saved["meta"]["token"],
                                        receipt, checkpoint, update)
@@ -380,6 +382,69 @@ def facebook_upload(media, size, page_id, token, receipt, checkpoint, update):
         else:
             raise PublishError("Facebook is still processing the Reel. Retry to check its status.")
     return f"https://www.facebook.com/reel/{video_id}"
+
+
+def facebook_page_video_upload(media, size, page_id, token, receipt, checkpoint, update):
+    endpoint = f"{META_VIDEO}/{page_id}/videos"
+    session = receipt.get("page_video_session")
+    if not session:
+        result = json_response(http("POST", endpoint, token=token, data={"upload_phase": "start", "file_size": size}))
+        session = service_id(result.get("upload_session_id"))
+        checkpoint(page_video_session=session, video_id=service_id(result.get("video_id")),
+                   offsets=facebook_video_offsets(result, size))
+
+    start, end = receipt["offsets"]
+    while start < end and not receipt.get("finish_accepted"):
+        media.seek(start)
+        chunk = media.read(end - start)
+        if len(chunk) != end - start:
+            raise PublishError("The local MP4 ended before Facebook received the complete file.")
+        update("export", "Uploading MP4", "Sending the full clip to the Facebook Page.", int(start * 100 / size))
+        result = json_response(http("POST", endpoint, token=token, data={
+            "upload_phase": "transfer", "upload_session_id": session, "start_offset": start,
+        }, files={"video_file_chunk": ("chunk.mp4", chunk, "application/octet-stream")}))
+        offsets = facebook_video_offsets(result, size)
+        if offsets[0] <= start:
+            raise PublishError("Facebook did not advance this upload. Retry to resume the same video.")
+        start, end = offsets
+        checkpoint(offsets=offsets)
+    if start != size:
+        raise PublishError("Facebook did not confirm the complete video transfer.")
+
+    update("finalize", "Publishing Page video", "Waiting for Facebook to confirm processing.")
+    if not receipt.get("finish_accepted"):
+        meta = receipt["submission"]
+        description = meta["description"]
+        if meta["synthetic_media"]:
+            description = (description + "\n\nContains AI-generated or significantly altered media.").strip()
+        result = json_response(http("POST", endpoint, token=token, data={
+            "upload_phase": "finish", "upload_session_id": session, "published": "true",
+            "title": meta["title"], "description": description,
+        }))
+        if result.get("success") is not True:
+            raise PublishError("Facebook did not accept the Page video publish request.")
+        checkpoint(finish_accepted=True)
+
+    video_id = receipt["video_id"]
+    for _ in range(15):
+        video = graph("GET", video_id, token, params={"fields": "status"})
+        status = video.get("status", {}).get("video_status")
+        if status == "ready":
+            return f"https://www.facebook.com/watch/?v={video_id}"
+        if status == "error":
+            raise PublishError("Facebook could not process this Page video. Check the uploaded file in Facebook.")
+        time.sleep(4)
+    raise PublishError("Facebook is still processing this Page video. Retry to check the same upload.")
+
+
+def facebook_video_offsets(result, size):
+    try:
+        start, end = int(result["start_offset"]), int(result["end_offset"])
+    except (KeyError, ValueError, TypeError):
+        raise PublishError("Facebook did not return valid upload offsets.") from None
+    if not 0 <= start <= end <= size:
+        raise PublishError("Facebook did not return valid upload offsets.")
+    return start, end
 
 
 def instagram_upload(media, size, account_id, token, receipt, checkpoint, update):

@@ -43,7 +43,7 @@ from core.editor_visuals import FRAMES, REACTIONS, REACTION_DURATION, frame_gif,
 from core.hashtag_research import YouTubeSearchUnavailable, research_youtube_hashtags
 from core.job_queue import DuplicateJob, JobQueue
 from core.publisher import posting_metadata, read_caption_context, write_clip_metadata
-from core.social_upload import PLATFORMS, PublishError, PublishStore
+from core.social_upload import FACEBOOK_REEL_MAX_SECONDS, PLATFORMS, PublishError, PublishStore
 from core.studio_pipeline import run_job, transcribe_range
 from core.transformer import AUDIO_EXTENSIONS, MUSIC_DIR, OUTPUT_DIR, asset_files, get_ffmpeg_cmd, inspect_media
 
@@ -134,6 +134,7 @@ class ClipRequest(BaseModel):
 
 class PostingKitRequest(BaseModel):
     notes: str = Field(default="", max_length=800)
+    refresh_hashtags: bool = False
 
 
 class HashtagSearchRequest(BaseModel):
@@ -1065,6 +1066,15 @@ def refresh_posting_kit(folder_name: str, filename: str, request: PostingKitRequ
     with posting_kit_update(video) as metadata:
         info = read_json(video.parent / "info.json")
         label = info.get("source_title") or video.stem
+        source_url = metadata.get("source_url") or info.get("youtube_url", "")
+        saved_research = metadata.get("hashtag_research", {})
+        if request.refresh_hashtags and saved_research.get("topic"):
+            try:
+                research = research_youtube_hashtags(saved_research["topic"], youtube_video_id(urlparse(source_url)))
+                if research["entries"]:
+                    metadata["hashtag_research"] = research
+            except YouTubeSearchUnavailable:
+                pass  # Keep previously sourced tags when YouTube is unavailable.
         context = metadata.get("posting_context") or (
             "" if metadata.get("selection") == "edited" else read_caption_context(video.with_suffix(".ass"))
         )
@@ -1079,7 +1089,7 @@ def refresh_posting_kit(folder_name: str, filename: str, request: PostingKitRequ
         if metadata.get("copy_ready") and not copy["copy_ready"]:
             raise HTTPException(502, "The new draft was incomplete. Your previous kit is still saved.")
 
-        metadata.update(posting_metadata(copy, label, metadata.get("source_url") or info.get("youtube_url", "")))
+        metadata.update(posting_metadata(copy, label, source_url))
         metadata["copy_needs_review"] = False
     return public_clip(metadata | {"filename": video.name})
 
@@ -1177,8 +1187,7 @@ def process_job(job_id, payload, preferences):
             raise PublishError("The clip was removed before its upload started.") from None
         if payload["platform"] == "facebook":
             duration, _ = inspect_media(video)
-            if not 3 <= duration <= 90:
-                raise PublishError("Facebook Reels require a clip from 3 to 90 seconds. Trim this export and share the new version.")
+            payload["facebook_page_video"] = not 3 <= duration <= FACEBOOK_REEL_MAX_SECONDS
         receipt = PUBLISHING.upload(payload, video, update)
         return {"url": receipt["url"], "batch_id": batch_task_id(video.parent, read_json(video.parent / "info.json"))}
 

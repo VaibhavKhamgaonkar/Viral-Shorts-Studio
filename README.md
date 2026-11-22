@@ -160,8 +160,8 @@ Keep the token private. [Meta token selection](https://developers.facebook.com/d
 
 #### Upload a clip
 
-1. Use **Share clip** on an export or **Share clips** for a batch. Choose the clips and destinations, then review each title and caption. The form starts with the saved posting kit, including its hashtags.
-2. For YouTube, select visibility and audience. Visibility starts at **Private**. Instagram follows the account's visibility, and Facebook Page Reels publish publicly. Set the AI media disclosure where applicable and confirm you have permission to publish.
+1. Use **Share clip** on an export or **Share clips** for a batch. The studio starts with the saved posting kit, then refreshes the title, description, and hashtags. Clips with a saved YouTube search topic refresh that research too. Review the fresh draft, make edits, or click **Use current copy** while generation runs.
+2. For YouTube, select visibility and audience. Visibility starts at **Private**. Instagram follows the account’s visibility. Facebook posts are public. Clips outside the Reels API’s 3–90 second range use the Page Video API and keep their original duration. Set the AI media disclosure where applicable and confirm you have permission to publish. [Facebook Reels API](https://developers.facebook.com/documentation/video-api/guides/reels-publishing) · [Facebook Page Video API](https://developers.facebook.com/docs/graph-api/reference/page/videos)
 3. Click **Upload selected**. Each clip and destination gets a task. **View upload** opens the platform result when its URL is available. For a stopped task, share the same export again with the same settings to resume supported sessions. Confirmed uploads for the same export and account are skipped.
 
 Credentials and upload records are saved locally under `data/publishing/`, which Git ignores. Keep the OAuth JSON and Meta tokens private. **Disconnect** removes the local connection. Revoke app access on the platform itself to invalidate a grant there.

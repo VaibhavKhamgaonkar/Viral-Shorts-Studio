@@ -11,7 +11,8 @@ from fastapi.testclient import TestClient
 import app
 from core.job_queue import JobQueue
 from core.social_upload import (
-    GOOGLE_TOKEN, META, YOUTUBE_SCOPES, PublishError, PublishStore, facebook_upload, instagram_upload, youtube_upload,
+    GOOGLE_TOKEN, META, META_VIDEO, YOUTUBE_SCOPES, PublishError, PublishStore, facebook_page_video_upload,
+    facebook_upload, instagram_upload, youtube_upload,
 )
 
 
@@ -137,6 +138,35 @@ class SocialUploadTests(unittest.TestCase):
         self.assertEqual(call.call_args_list[1].kwargs["headers"]["Content-Range"], "bytes 3-5/6")
         self.assertEqual(call.call_args_list[1].kwargs["data"], b"def")
         self.assertEqual(result, "https://studio.youtube.com/video/abcdefghijk/edit")
+
+    def test_long_facebook_upload_uses_page_video_and_transfers_the_complete_file(self):
+        receipt = {"submission": {"title": "Title", "description": "Caption", "synthetic_media": False}}
+
+        def checkpoint(**values):
+            receipt.update(values)
+
+        with patch("core.social_upload.http", side_effect=[
+            response(body={"upload_session_id": "111", "video_id": "222", "start_offset": "0", "end_offset": "3"}),
+            response(body={"start_offset": "3", "end_offset": "6"}),
+            response(body={"start_offset": "6", "end_offset": "6"}),
+            response(body={"success": True}),
+            response(body={"status": {"video_status": "ready"}}),
+        ]) as call:
+            result = facebook_page_video_upload(io.BytesIO(b"abcdef"), 6, "123", "page-token", receipt, checkpoint, Mock())
+        self.assertEqual(call.call_args_list[0].args[1], META_VIDEO + "/123/videos")
+        self.assertEqual(call.call_args_list[1].kwargs["files"]["video_file_chunk"][1], b"abc")
+        self.assertEqual(call.call_args_list[2].kwargs["files"]["video_file_chunk"][1], b"def")
+        self.assertEqual(call.call_args_list[3].kwargs["data"]["published"], "true")
+        self.assertEqual(result, "https://www.facebook.com/watch/?v=222")
+
+    def test_worker_routes_an_export_over_ninety_seconds_to_page_video(self):
+        payload = {"source_type": "publish", "platform": "facebook", "folder": "batch", "filename": "clip-01.mp4"}
+        video = Path("batch/clip-01.mp4")
+        with patch.object(app, "exported_video", return_value=video), \
+                patch.object(app, "inspect_media", return_value=(115.365, True)), \
+                patch.object(app.PUBLISHING, "upload", return_value={"url": "https://www.facebook.com/watch/?v=222"}) as upload:
+            app.process_job("test", payload, {})
+        self.assertTrue(upload.call_args.args[0]["facebook_page_video"])
 
     def test_meta_upload_uses_local_bytes_and_confirms_before_success(self):
         for platform in ("facebook", "instagram"):

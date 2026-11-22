@@ -140,3 +140,18 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(refreshed.status_code, 200, refreshed.text)
         self.assertEqual(model.call_args.kwargs["researched_hashtags"], ("BikeRepair",))
         self.assertEqual(refreshed.json()["hashtag_research"], research)
+
+    def test_share_regeneration_refreshes_only_the_saved_public_hashtag_topic(self):
+        research = {"platform": "youtube", "topic": "Bicycle repair", "entries": [{"tag": "BikeRepair"}]}
+        updated_research = research | {"entries": [{"tag": "FixYourBike"}]}
+        self.clip("Workshop_[bike]", 1010, title="Before", hashtag_research=research,
+                  source_url="https://youtu.be/abcdefghijk", posting_context="The crank was loose.")
+        url = "/api/posting-kit/Workshop_[bike]/clip-01.mp4"
+        draft = {"title": "Fix the crank", "copy_source": "ai", "tags": ["CrankBolt"], "copy_ready": True}
+        with patch.object(app, "research_youtube_hashtags", return_value=updated_research) as search, \
+                patch.object(app, "generate_post_copy", return_value=draft) as model:
+            refreshed = self.client.post(url, json={"notes": "A private note.", "refresh_hashtags": True})
+        self.assertEqual(refreshed.status_code, 200, refreshed.text)
+        search.assert_called_once_with("Bicycle repair", "abcdefghijk")
+        self.assertEqual(model.call_args.kwargs["researched_hashtags"], ("FixYourBike",))
+        self.assertEqual(refreshed.json()["hashtag_research"], updated_research)
