@@ -496,7 +496,19 @@ dialog::backdrop { background: #231a29b5; }
 #editor-voice-text { width: 100%; min-height: 54px; font: inherit; color: var(--ink); background: var(--field-surface); border: 1px solid var(--field-border); border-radius: 7px; padding: 8px; resize: vertical; }
 .editor-audio-filters, .editor-voice-tool { border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; margin-block: 8px; }
 .editor-audio-filters > .field, .editor-voice-tool > .field { margin-top: 7px; }
-#editor-voice-audition { width: 100%; height: 42px; }
+#editor-voice-audition, #editor-track-audition { width: 100%; height: 42px; }
+.editor-source-tracks { display: grid; gap: 6px; margin-block: 10px; }
+.editor-track-group { font-size: .83rem; margin-block: 6px 2px; }
+.editor-source-track { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 6px; padding: 6px; border: 1px solid var(--line); border-radius: 8px; }
+.editor-source-track input { height: 38px; }
+.editor-source-track[data-muted="true"] { background: #eee7e0; }
+.editor-source-track[data-muted="true"] .editor-track-toggle { color: var(--paper); background: var(--plum); }
+.editor-source-track button { min-width: 60px; }
+#editor-track-review .editor-hint { align-self: center; }
+@media (max-width: 430px) {
+    .editor-source-track { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+    .editor-source-track input { grid-column: 1 / -1; }
+}
 .editor-reaction-picker { display: grid; grid-template-columns: minmax(0, 82px) minmax(0, 1fr); gap: 8px; align-items: center; margin-top: 7px; }
 .editor-reaction-thumb { display: grid; place-items: center; aspect-ratio: 2 / 3; min-width: 0; background: var(--plum); border-radius: 7px; overflow: hidden; }
 .editor-reaction-thumb :is(img, video) { display: block; width: 100%; max-height: 121px; object-fit: contain; }

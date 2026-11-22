@@ -477,6 +477,7 @@ editorDialog.addEventListener("close", () => {
     clearRenderedPreview();
     closeEditorComparison();
     releaseReactionPreview();
+    releaseTrackAudition();
     voiceAudition.pause();
     voiceAudition.removeAttribute("src");
     voiceAudition.load();

@@ -19,6 +19,7 @@ from typing import Literal
 from urllib.parse import parse_qs, urlparse
 
 import av
+import numpy as np
 import requests
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
@@ -30,6 +31,7 @@ from starlette.background import BackgroundTask
 from config.settings import load_settings, save_settings
 from config.studio import Layout, StudioSettings, studio_settings
 from core.analyzer import generate_post_copy
+from core.audio_breakdown import read_audio, write_audio
 from core.clip_editor import (
     ClipEdit, EFFECTS, LOOKS, InsertAsset, edit_duration, effect_wave, frame_rate, kept_source_ranges,
     render_edit, validate_timeline,
@@ -57,6 +59,7 @@ POSTING_KIT_LOCK = threading.Lock()
 EDITOR_PREVIEW_LOCK = threading.Lock()
 EDITOR_CAPTIONS_LOCK = threading.Lock()
 EDITOR_STEMS_LOCK = threading.Lock()
+EDITOR_TRACKS_LOCK = threading.Lock()
 LOGGER = logging.getLogger(__name__)
 
 
@@ -380,6 +383,14 @@ class StemRequest(BaseModel):
     revision: str = Field(default="", pattern=r"^\d{0,24}$")
 
 
+class TrackRequest(StemRequest):
+    speakers: int = Field(default=0, ge=0, le=8)
+
+
+class TrackMixRequest(BaseModel):
+    keep: list[str] = Field(max_length=18)
+
+
 @app.post("/api/editor-voices")
 def generate_voiceover(request: SpeechRequest):
     VOICEOVERS_DIR.mkdir(parents=True, exist_ok=True)
@@ -446,6 +457,97 @@ def separate_clip_audio(folder_name: str, filename: str, request: StemRequest):
         raise HTTPException(503, "Could not separate this range. Check the model download and audio separation setup.") from error
     finally:
         EDITOR_STEMS_LOCK.release()
+
+
+def audio_breakdown_folder(key):
+    if not re.fullmatch(r"[a-f0-9]{24}", key):
+        raise HTTPException(404, "Audio analysis is unavailable.")
+    return VOICEOVERS_DIR / "track-analysis" / key
+
+
+def read_audio_breakdown(key):
+    folder = audio_breakdown_folder(key)
+    manifest = read_json(folder / "tracks.json")
+    if not manifest:
+        raise HTTPException(404, "Audio analysis is unavailable.")
+    return folder, manifest
+
+
+@app.post("/api/edit/{folder_name}/{filename}/audio-tracks")
+def analyze_audio_tracks(folder_name: str, filename: str, request: TrackRequest):
+    video = exported_video(folder_name, filename)
+    revision = str(video.stat().st_mtime_ns)
+    if request.revision and request.revision != revision:
+        raise HTTPException(409, "The clip changed. Refresh the library and reopen it.")
+    key = hashlib.sha256(f"tracks:1|{video}|{revision}|{request.start}|{request.end}|{request.speakers}".encode()).hexdigest()[:24]
+    destination = audio_breakdown_folder(key)
+    if destination.is_dir():
+        return {"id": key, **read_audio_breakdown(key)[1]}
+    if importlib.util.find_spec("sherpa_onnx") is None:
+        raise HTTPException(503, "Run setup_audio_separation.bat once to enable speaker and sound tracks, then restart the studio.")
+    if not EDITOR_TRACKS_LOCK.acquire(blocking=False):
+        raise HTTPException(409, "Another audio scan is running. Try again after it finishes.")
+    try:
+        if destination.is_dir():
+            return {"id": key, **read_audio_breakdown(key)[1]}
+        source_request = StemRequest(start=request.start, end=request.end, revision=revision)
+        stems = separate_clip_audio(folder_name, filename, source_request)
+        voice, _ = editor_voiceover_asset(stems["voice"]["id"])
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with TemporaryDirectory(dir=destination.parent) as directory:
+            scratch = Path(directory)
+            source = scratch / "source.wav"
+            tracks = scratch / "tracks"
+            tracks.mkdir()
+            subprocess.run(
+                [get_ffmpeg_cmd(), "-nostdin", "-v", "error", "-ss", str(request.start), "-i", str(video), "-map", "0:a:0",
+                 "-t", str(request.end - request.start), "-af", "apad", "-ar", "48000", "-ac", "2",
+                 "-c:a", "pcm_s16le", str(source)], check=True, capture_output=True, timeout=45,
+            )
+            subprocess.run([sys.executable, "-m", "core.audio_breakdown", str(source), str(voice), str(tracks),
+                            str(AUDIO_MODELS_DIR / "track-detection"), str(request.speakers)],
+                           cwd=BASE_DIR, check=True, capture_output=True, timeout=180)
+            if str(video.stat().st_mtime_ns) != revision:
+                raise HTTPException(409, "The clip changed during analysis. Reopen it and try again.")
+            tracks.rename(destination)
+        return {"id": key, **read_audio_breakdown(key)[1]}
+    except subprocess.TimeoutExpired as error:
+        raise HTTPException(504, "The audio scan took too long. Try a shorter section.") from error
+    except (OSError, subprocess.CalledProcessError) as error:
+        details = (getattr(error, "stderr", None) or b"").decode("utf-8", errors="replace").strip()
+        LOGGER.error("Audio track analysis failed: %s", details[-1800:] or type(error).__name__)
+        raise HTTPException(503, "Could not scan this audio. Check audio separation setup and try a shorter selection.") from error
+    finally:
+        EDITOR_TRACKS_LOCK.release()
+
+
+@app.get("/api/audio-tracks/{key}/{filename}")
+def listen_audio_track(key: str, filename: str):
+    folder, manifest = read_audio_breakdown(key)
+    if filename not in {track["id"] for track in manifest["tracks"]} or not (folder / filename).is_file():
+        raise HTTPException(404, "That audio track is unavailable.")
+    return FileResponse(folder / filename, media_type="audio/wav")
+
+
+@app.post("/api/audio-tracks/{key}/mix")
+def mix_audio_tracks(key: str, request: TrackMixRequest):
+    folder, manifest = read_audio_breakdown(key)
+    keep = sorted(set(request.keep))
+    known = {track["id"] for track in manifest["tracks"]}
+    if not keep or not set(keep) <= known:
+        raise HTTPException(422, "Choose the audio tracks to keep from this scan.")
+    ident = hashlib.sha256(f"{key}|{','.join(keep)}".encode()).hexdigest()[:20]
+    output = VOICEOVERS_DIR / f"Filtered-audio-{ident}.wav"
+    if not output.is_file():
+        samples = read_audio(folder / keep[0])
+        for name in keep[1:]:
+            samples += read_audio(folder / name)
+        np.nan_to_num(samples, copy=False)
+        with TemporaryDirectory(dir=VOICEOVERS_DIR) as directory:
+            stage = Path(directory) / output.name
+            write_audio(stage, samples)
+            stage.replace(output)
+    return voiceover_info(*editor_voiceover_asset(output.name))
 
 
 @app.post("/api/music")

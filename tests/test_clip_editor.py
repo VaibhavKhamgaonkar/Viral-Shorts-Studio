@@ -14,6 +14,7 @@ import numpy as np
 from fastapi.testclient import TestClient
 
 import app
+from core.audio_breakdown import RATE, partition_audio, read_audio, speaker_spans, write_audio
 from core.job_queue import JobQueue
 from core.transformer import get_ffmpeg_cmd, inspect_media
 
@@ -26,6 +27,36 @@ class ClipEditorTests(unittest.TestCase):
                 return job
             time.sleep(.05)
         self.fail(f"Edit {job_id} did not finish.")
+
+    def test_audio_tracks_keep_overlaps_separate_and_mix_only_the_selected_rows(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            key = "1" * 24
+            folder = root / "track-analysis" / key
+            folder.mkdir(parents=True)
+            voices = np.full((2 * RATE, 2), .125, dtype=np.float32)
+            spans = speaker_spans([(0, 1, 7), (.5, 1.5, 3)], 2)
+            tracks = []
+            for index, (label, samples, _) in enumerate(partition_audio(voices, spans, "Unassigned voice"), 1):
+                name = f"track-{index}.wav"
+                write_audio(folder / name, samples)
+                tracks.append({"id": name, "label": label})
+            self.assertEqual([track["label"] for track in tracks],
+                             ["Speaker 1", "Overlapping voices", "Speaker 2", "Unassigned voice"])
+            (folder / "tracks.json").write_text(json.dumps({"tracks": tracks}), encoding="utf-8")
+            with patch.object(app, "VOICEOVERS_DIR", root):
+                client = TestClient(app.app)
+                self.addCleanup(client.close)
+                route = "/api/audio-tracks/" + key
+                audition = client.get(route + "/track-3.wav")
+                self.assertEqual(audition.status_code, 200)
+                self.assertEqual(audition.headers["content-type"], "audio/wav")
+                result = client.post(route + "/mix", json={"keep": ["track-3.wav", "track-4.wav"]})
+                self.assertEqual(result.status_code, 200, result.text)
+                samples = read_audio(root / result.json()["id"])
+                self.assertTrue(np.all(samples[:RATE] == 0))
+                self.assertTrue(np.all(samples[RATE:] == .125))
+                self.assertEqual(client.post(route + "/mix", json={"keep": ["missing.wav"]}).status_code, 422)
 
     def test_sound_assets_match_the_audition_files(self):
         client = TestClient(app.app)

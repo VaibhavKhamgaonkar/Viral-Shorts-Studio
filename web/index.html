@@ -511,7 +511,36 @@
             </div>
             <div id="editor-panel-audio" role="tabpanel" aria-labelledby="editor-tab-audio" hidden>
             <section class="editor-group">
-                <h3>Original audio</h3>
+                <h3>Separate audio tracks</h3>
+                <p class="editor-hint">Listen to each detected speaker and sound. Mute the tracks you want to remove.</p>
+                <div class="editor-reaction-actions">
+                    <button id="editor-scan-audio" class="button button-primary" type="button">Scan audio</button>
+                    <a class="button button-plain" href="https://github.com/VaibhavKhamgaonkar/Viral-Shorts-Studio#audio-editing" target="_blank" rel="noopener noreferrer">Setup</a>
+                </div>
+                <details id="editor-scan-settings" class="editor-disclosure editor-audio-filters">
+                    <summary>Scan settings</summary>
+                    <p class="editor-hint">Scan up to 2 minutes. Times start at the beginning of the trim.</p>
+                    <div class="editor-fields">
+                        <div class="field"><label for="editor-scan-start">Scan start (sec)</label><input id="editor-scan-start" type="number" min="0" value="0" step="any"></div>
+                        <div class="field"><label for="editor-scan-end">Scan end (sec)</label><input id="editor-scan-end" type="number" min="0" placeholder="End of trim" step="any"></div>
+                        <div class="field"><label for="editor-speakers-expected">Expected speakers</label><select id="editor-speakers-expected"><option value="0">Detect automatically</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option></select></div>
+                    </div>
+                </details>
+                <p id="editor-scan-status" class="editor-hint" role="status"></p>
+                <div id="editor-track-review" hidden>
+                    <div class="editor-reaction-actions">
+                        <button id="editor-apply-track-mix" class="button button-primary" type="button">Apply track changes</button>
+                        <button id="editor-keep-all-tracks" class="button button-plain" type="button" hidden>Keep all</button>
+                        <span id="editor-track-count" class="editor-hint" role="status"></span>
+                    </div>
+                    <p id="editor-track-listening" class="editor-hint" role="status" hidden></p>
+                    <audio id="editor-track-audition" controls preload="none" aria-label="Listen to a detected track" hidden></audio>
+                    <div id="editor-source-tracks" class="editor-source-tracks"></div>
+                    <p class="editor-hint">A sound may share a track with audio playing at the same time.</p>
+                </div>
+            </section>
+            <details class="editor-group editor-disclosure" id="editor-original-audio">
+                <summary>Original volume and filters</summary>
                 <div class="field"><label for="editor-source-level">Volume <output id="editor-source-level-value" for="editor-source-level">100%</output></label><input id="editor-source-level" name="source_level" type="range" min="0" max="100" value="100"></div>
                 <details class="editor-disclosure editor-audio-filters">
                     <summary>Audio filters</summary>
@@ -521,9 +550,9 @@
                     <div class="field"><label for="editor-hum-filter">Electrical hum</label><select id="editor-hum-filter" name="hum_filter"><option value="0">Off</option><option value="50">50 Hz</option><option value="60">60 Hz</option></select></div>
                     <p class="editor-hint">Play rendered edit to hear the filters.</p>
                 </details>
-            </section>
-            <section class="editor-group">
-                <h3>Background music</h3>
+            </details>
+            <details class="editor-group editor-disclosure" id="editor-background-music">
+                <summary>Background music</summary>
                 <div class="field">
                     <label for="editor-track">Background track</label>
                     <div class="editor-track-row">
@@ -541,9 +570,9 @@
                     </div>
                     <label class="check"><input type="checkbox" name="duck_music"> Lower music under foreground audio</label>
                 </div>
-            </section>
-            <section class="editor-group">
-                <h3>Timed audio</h3>
+            </details>
+            <details class="editor-group editor-disclosure" id="editor-timed-audio">
+                <summary>Voice-over and timed audio</summary>
                 <p class="editor-hint">Mute or lower the original for a section and add a recording or voice-over. Times are measured from the start of the trim.</p>
                 <div class="editor-fields">
                     <div class="field"><label for="editor-audio-at">Start (sec)</label><input id="editor-audio-at" type="number" min="0" step="any" value="0"><button id="editor-audio-mark-start" class="button button-plain" type="button">Start at playhead</button></div>
@@ -571,28 +600,15 @@
                     </div>
                     <button id="editor-generate-voice" class="button button-outline" type="button">Generate audio</button>
                 </details>
-                <details class="editor-disclosure editor-voice-tool">
-                    <summary>Separate voice and background</summary>
-                    <p class="editor-hint">Creates separate voice and background tracks for this range. Audition the track you want to keep, then apply it in place of the original mix.</p>
-                    <div class="editor-reaction-actions">
-                        <button id="editor-separate-audio" class="button button-outline" type="button">Separate selected range</button>
-                        <a id="editor-separator-setup" class="button button-plain" href="https://github.com/VaibhavKhamgaonkar/Viral-Shorts-Studio#audio-editing" target="_blank" rel="noopener noreferrer">Setup instructions</a>
-                    </div>
-                    <div id="editor-separated-tracks" class="editor-reaction-actions" hidden>
-                        <button id="editor-keep-voice" class="button button-outline" type="button">Use voice only</button>
-                        <button id="editor-keep-background" class="button button-outline" type="button">Use background only</button>
-                    </div>
-                    <p id="editor-separator-status" class="editor-hint" role="status"></p>
-                </details>
                 <div class="editor-reaction-actions">
                     <button id="editor-save-audio" class="button button-primary" type="button">Apply audio to range</button>
                     <button id="editor-cancel-audio" class="button button-plain" type="button" hidden>Cancel range edit</button>
                 </div>
                 <p id="editor-audio-status" class="editor-hint" role="status"></p>
                 <div class="editor-visual-cues" id="editor-audio-regions"></div>
-            </section>
-            <section class="editor-group">
-                <h3>Sound effects</h3>
+            </details>
+            <details class="editor-group editor-disclosure" id="editor-sound-controls">
+                <summary>New sound effects</summary>
                 <div class="editor-effect-row">
                     <label for="editor-effect" class="sr-only">Sound effect</label>
                     <select id="editor-effect"><option value="">Loading sounds…</option></select>
@@ -602,7 +618,7 @@
                 <p class="editor-hint">Cue times are in seconds from the start of the trimmed clip.</p>
                 <p id="editor-sound-note" class="editor-hint" hidden></p>
                 <div id="editor-cues" class="editor-cues"></div>
-            </section>
+            </details>
             </div>
             </div>
         </form>

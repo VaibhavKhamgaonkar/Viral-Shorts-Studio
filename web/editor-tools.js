@@ -3,6 +3,7 @@
 const editorTabs = [...byId("editor-tabs").querySelectorAll('[role="tab"]')];
 
 function showEditorTool(name) {
+    if (name !== "audio") releaseTrackAudition();
     for (const tab of editorTabs) {
         const active = tab.id === "editor-tab-" + name;
         tab.setAttribute("aria-selected", String(active));

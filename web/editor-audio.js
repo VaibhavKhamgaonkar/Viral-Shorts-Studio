@@ -3,7 +3,8 @@
 const voiceoverMenu = byId("editor-voiceover");
 const voiceAudition = byId("editor-voice-audition");
 const timedAudioStatus = byId("editor-audio-status");
-const sourceTrackStatus = byId("editor-separator-status");
+const sourceTrackStatus = byId("editor-scan-status");
+const trackAudition = byId("editor-track-audition");
 let selectedAudioRegion;
 
 function voiceoverUrl(id) {
@@ -47,10 +48,17 @@ function resetEditorAudioTools() {
     setAudioRegionDraft();
     byId("editor-voice-synthesis").open = false;
     byId("editor-generate-voice").disabled = false;
-    byId("editor-separate-audio").disabled = false;
+    byId("editor-scan-audio").disabled = false;
+    byId("editor-scan-audio").classList.replace("button-outline", "button-primary");
+    byId("editor-apply-track-mix").disabled = false;
     byId("editor-voice-help").textContent = "Uses voices installed on this Windows PC.";
     sourceTrackStatus.textContent = "";
-    byId("editor-separated-tracks").hidden = true;
+    byId("editor-track-review").hidden = true;
+    byId("editor-source-tracks").replaceChildren();
+    for (const id of ["editor-scan-settings", "editor-original-audio", "editor-background-music", "editor-timed-audio", "editor-sound-controls"]) {
+        byId(id).open = false;
+    }
+    releaseTrackAudition();
     renderAudioRegions();
 }
 
@@ -73,6 +81,7 @@ function audioRangeProblem(regions, length) {
 
 function openAudioRegion(region) {
     showEditorTool("audio");
+    byId("editor-timed-audio").open = true;
     setAudioRegionDraft(region);
     jumpToEditorCue(region.at, region.end);
 }
@@ -199,51 +208,175 @@ byId("editor-generate-voice").addEventListener("click", async ({currentTarget}) 
     }
 });
 
-byId("editor-separate-audio").addEventListener("click", async ({currentTarget}) => {
+function releaseTrackAudition() {
+    trackAudition.pause();
+    trackAudition.hidden = true;
+    trackAudition.removeAttribute("src");
+    trackAudition.load();
+    byId("editor-track-listening").hidden = true;
+}
+
+function updateTrackCount(scan) {
+    const muted = scan.tracks.filter(track => !track.keep).length;
+    byId("editor-track-count").textContent = muted + " of " + scan.tracks.length + " muted";
+    byId("editor-keep-all-tracks").hidden = !muted;
+    byId("editor-keep-all-tracks").disabled = Boolean(scan.applying);
+    byId("editor-apply-track-mix").disabled = Boolean(scan.applying) || (!muted && !editSession.audioRegions.some(region =>
+        region.trackMix && Math.abs(region.at - scan.at) < .002 && Math.abs(region.end - scan.end) < .002));
+}
+
+function renderDetectedTracks(scan) {
+    const rows = scan.tracks.map(track => {
+        const row = element("div", "editor-source-track");
+        const name = element("input");
+        name.type = "text";
+        name.maxLength = 48;
+        name.value = track.name ?? track.label;
+        name.setAttribute("aria-label", "Rename " + track.label);
+        const listen = action("Listen", () => {
+            editorVideo.pause();
+            renderedVideo.pause();
+            voiceAudition.pause();
+            trackAudition.hidden = false;
+            trackAudition.src = "/api/audio-tracks/" + scan.id + "/" + track.id;
+            trackAudition.currentTime = track.first;
+            const status = byId("editor-track-listening");
+            status.hidden = false;
+            status.textContent = "Listening to " + (name.value.trim() || track.label);
+            trackAudition.play().catch(error => {
+                if (error.name !== "AbortError") status.textContent = "Press play to audition this track.";
+            });
+        }, null, "button-outline");
+        const toggle = action("Mute", () => {
+            if (scan.applying) return;
+            track.keep = !track.keep;
+            updateToggle();
+            updateTrackCount(scan);
+        }, null, "button-outline");
+        toggle.classList.add("editor-track-toggle");
+        function updateToggle() {
+            const label = name.value.trim() || track.label;
+            row.dataset.muted = String(!track.keep);
+            toggle.textContent = track.keep ? "Mute" : "Keep";
+            toggle.setAttribute("aria-label", (track.keep ? "Mute " : "Keep ") + label);
+            listen.setAttribute("aria-label", "Listen to " + label);
+        }
+        name.addEventListener("input", event => {
+            event.stopPropagation();
+            track.name = name.value;
+            updateToggle();
+        });
+        updateToggle();
+        row.append(name, listen, toggle);
+        return row;
+    });
+    const grouped = [];
+    for (const [kind, heading] of [["voice", "Voices"], ["sound", "Sounds and background"]]) {
+        const matching = rows.filter((_, index) => scan.tracks[index].kind === kind);
+        if (matching.length) grouped.push(element("h4", "editor-track-group", heading), ...matching);
+    }
+    byId("editor-source-tracks").replaceChildren(...grouped);
+    byId("editor-track-review").hidden = !rows.length;
+    if (rows.length) byId("editor-scan-audio").classList.replace("button-primary", "button-outline");
+    updateTrackCount(scan);
+}
+
+byId("editor-keep-all-tracks").addEventListener("click", () => {
+    const scan = editSession.audioTrackScan;
+    for (const track of scan.tracks) track.keep = true;
+    renderDetectedTracks(scan);
+    const apply = byId("editor-apply-track-mix");
+    (apply.disabled ? byId("editor-scan-audio") : apply).focus();
+});
+
+byId("editor-scan-audio").addEventListener("click", async ({currentTarget}) => {
     const session = editSession;
     const trim = editorRange();
-    const at = byId("editor-audio-at").valueAsNumber;
-    const end = byId("editor-audio-end").valueAsNumber;
+    const at = byId("editor-scan-start").valueAsNumber;
+    const endInput = byId("editor-scan-end");
+    const end = endInput.value ? endInput.valueAsNumber : trim.end - trim.start;
     const length = end - at;
     if (!trim.valid || !Number.isFinite(length) || at < 0 || end > trim.end - trim.start + .005 || length < .5 || length > 120) {
         sourceTrackStatus.textContent = "Set a range of 0.5 seconds to 2 minutes inside the trim.";
+        byId("editor-scan-settings").open = true;
         return;
     }
     currentTarget.disabled = true;
-    byId("editor-separated-tracks").hidden = true;
-    sourceTrackStatus.textContent = "Separating locally. The first run may download the model.";
+    byId("editor-track-review").hidden = true;
+    releaseTrackAudition();
+    sourceTrackStatus.textContent = "Scanning for speakers and sounds. This runs on your PC and can take a few minutes.";
     try {
-        const result = await api("/api/edit/" + session.path + "/separate-audio", jsonRequest("POST", {
+        const result = await api("/api/edit/" + session.path + "/audio-tracks", jsonRequest("POST", {
             start: trim.start + at, end: trim.start + end, revision: session.clip.file_revision || "",
+            speakers: Number(byId("editor-speakers-expected").value),
         }));
         if (editSession !== session) return;
-        session.separatedAudio = {at, end, trimStart: trim.start, ...result};
-        addVoiceoverAsset(result.voice);
-        addVoiceoverAsset(result.background);
-        byId("editor-separated-tracks").hidden = false;
-        sourceTrackStatus.textContent = "Both tracks are ready. Pick one to audition and apply.";
+        const previous = session.audioTrackScan?.id === result.id ? session.audioTrackScan.tracks : [];
+        const tracks = result.tracks.map(track => previous.find(saved => saved.id === track.id) || {...track, keep: true});
+        session.audioTrackScan = {id: result.id, at, end, trimStart: trim.start, tracks};
+        renderDetectedTracks(session.audioTrackScan);
+        sourceTrackStatus.textContent = result.tracks.length
+            ? "Tracks ready. Listen first, then mute the tracks you want removed."
+            : "No audible tracks were detected in this range.";
     } catch (error) {
-        if (editSession === session) sourceTrackStatus.textContent = error.message;
+        if (editSession === session) {
+            if (session.audioTrackScan) renderDetectedTracks(session.audioTrackScan);
+            sourceTrackStatus.textContent = error.message;
+        }
     } finally {
         if (editSession === session) currentTarget.disabled = false;
     }
 });
 
-for (const kind of ["voice", "background"]) {
-    byId("editor-keep-" + kind).addEventListener("click", () => {
-        const result = editSession.separatedAudio;
-        if (result.trimStart !== editorRange().start) {
-            sourceTrackStatus.textContent = "The trim start changed. Separate the new range to keep the tracks aligned.";
-            return;
+byId("editor-apply-track-mix").addEventListener("click", async () => {
+    const session = editSession;
+    const scan = session.audioTrackScan;
+    const trim = editorRange();
+    if (!scan || !trim.valid || trim.start !== scan.trimStart || scan.end > trim.end - trim.start + .005) {
+        sourceTrackStatus.textContent = "The trim changed. Scan the new range to keep audio aligned.";
+        return;
+    }
+    const keep = scan.tracks.filter(track => track.keep).map(track => track.id);
+    const keepAll = keep.length === scan.tracks.length;
+    const previousRegions = session.audioRegions;
+    const unchanged = session.audioRegions.filter(region =>
+        !(region.trackMix && Math.abs(region.at - scan.at) < .002 && Math.abs(region.end - scan.end) < .002));
+    const entry = {at: scan.at, end: scan.end, source_level: 0, level: 100, asset: "", trackMix: true};
+    const regions = keepAll ? unchanged : [...unchanged, entry].sort((left, right) => left.at - right.at);
+    const error = audioRangeProblem(regions, trim.end - trim.start);
+    if (error || regions.length > 12) {
+        sourceTrackStatus.textContent = error || "This clip already has 12 audio ranges.";
+        return;
+    }
+    scan.applying = true;
+    updateTrackCount(scan);
+    try {
+        if (!keepAll && keep.length) {
+            sourceTrackStatus.textContent = "Mixing the tracks marked Keep…";
+            const asset = await api("/api/audio-tracks/" + scan.id + "/mix", jsonRequest("POST", {keep}));
+            if (editSession !== session || session.audioTrackScan !== scan) return;
+            const current = editorRange();
+            if (!current.valid || current.start !== trim.start || current.end !== trim.end || session.audioRegions !== previousRegions) {
+                sourceTrackStatus.textContent = "Audio or trim changed while mixing. Apply again to use the current settings.";
+                return;
+            }
+            addVoiceoverAsset(asset);
+            entry.asset = asset.id;
         }
-        byId("editor-audio-at").value = result.at;
-        byId("editor-audio-end").value = result.end;
-        byId("editor-audio-source-level").value = 0;
-        updateRegionLevels();
-        selectNewVoiceover(result[kind], false);
-        sourceTrackStatus.textContent = "Selected. Play the audio above, then choose Apply audio to range.";
-    });
-}
+        releaseTrackAudition();
+        clearRenderedPreview();
+        session.audioRegions = regions;
+        renderAudioRegions();
+        jumpToEditorCue(scan.at);
+        updateEditorLevels();
+        sourceTrackStatus.textContent = keepAll ? "Original mix restored for this range." : "Track changes applied. Play the edited clip to review.";
+    } catch (error) {
+        if (editSession === session) sourceTrackStatus.textContent = error.message;
+    } finally {
+        scan.applying = false;
+        if (editSession === session && session.audioTrackScan === scan) updateTrackCount(scan);
+    }
+});
 
 byId("editor-cancel-audio").addEventListener("click", () => setAudioRegionDraft());
 byId("editor-save-audio").addEventListener("click", () => {
