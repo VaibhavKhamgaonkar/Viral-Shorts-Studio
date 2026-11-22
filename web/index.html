@@ -317,7 +317,13 @@
 <dialog id="clip-editor" class="clip-editor" aria-labelledby="editor-title">
     <header class="editor-header">
         <form method="dialog"><button class="button button-outline editor-back" aria-label="Back to clips, close editor" title="Back to clips"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg><span>Back to clips</span></button></form>
-        <div class="editor-document"><h2 id="editor-title">Edit clip</h2><p id="editor-source"></p></div>
+        <div class="editor-document">
+            <h2 id="editor-title">Edit clip</h2><p id="editor-source"></p>
+            <div id="editor-scan-indicator" class="editor-scan-indicator">
+                <span id="editor-scan-activity" class="sr-only" role="status"></span>
+                <span id="editor-scan-badge" hidden aria-hidden="true">Scanning audio <span id="editor-scan-time"></span></span>
+            </div>
+        </div>
         <div class="editor-export-controls">
             <label class="sr-only" for="editor-save-mode">Save edited clip</label>
             <select id="editor-save-mode" name="save_mode" form="editor-form"><option value="version">Save as new version</option><option value="replace">Replace existing file</option></select>

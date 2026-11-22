@@ -5,7 +5,27 @@ const voiceAudition = byId("editor-voice-audition");
 const timedAudioStatus = byId("editor-audio-status");
 const sourceTrackStatus = byId("editor-scan-status");
 const trackAudition = byId("editor-track-audition");
+const scanAudioButton = byId("editor-scan-audio");
 let selectedAudioRegion;
+let scanClock;
+
+function setAudioScanRunning(running) {
+    clearInterval(scanClock);
+    scanAudioButton.disabled = running;
+    scanAudioButton.textContent = running ? "Scanning…" : "Scan audio";
+    byId("editor-scan-badge").hidden = !running;
+    byId("editor-scan-activity").textContent = running ? "Scanning audio" : "";
+    if (!running) return;
+
+    const start = performance.now();
+    const clock = byId("editor-scan-time");
+    const update = () => {
+        const seconds = Math.floor((performance.now() - start) / 1000);
+        clock.textContent = Math.floor(seconds / 60) + ":" + String(seconds % 60).padStart(2, "0");
+    };
+    update();
+    scanClock = setInterval(update, 1000);
+}
 
 function voiceoverUrl(id) {
     return "/api/editor-voiceovers/" + encodeURIComponent(id);
@@ -48,8 +68,8 @@ function resetEditorAudioTools() {
     setAudioRegionDraft();
     byId("editor-voice-synthesis").open = false;
     byId("editor-generate-voice").disabled = false;
-    byId("editor-scan-audio").disabled = false;
-    byId("editor-scan-audio").classList.replace("button-outline", "button-primary");
+    setAudioScanRunning(false);
+    scanAudioButton.classList.replace("button-outline", "button-primary");
     byId("editor-apply-track-mix").disabled = false;
     byId("editor-voice-help").textContent = "Uses voices installed on this Windows PC.";
     sourceTrackStatus.textContent = "";
@@ -289,7 +309,7 @@ byId("editor-keep-all-tracks").addEventListener("click", () => {
     (apply.disabled ? byId("editor-scan-audio") : apply).focus();
 });
 
-byId("editor-scan-audio").addEventListener("click", async ({currentTarget}) => {
+scanAudioButton.addEventListener("click", async () => {
     const session = editSession;
     const trim = editorRange();
     const at = byId("editor-scan-start").valueAsNumber;
@@ -301,10 +321,10 @@ byId("editor-scan-audio").addEventListener("click", async ({currentTarget}) => {
         byId("editor-scan-settings").open = true;
         return;
     }
-    currentTarget.disabled = true;
+    setAudioScanRunning(true);
     byId("editor-track-review").hidden = true;
     releaseTrackAudition();
-    sourceTrackStatus.textContent = "Scanning for speakers and sounds. This runs on your PC and can take a few minutes.";
+    sourceTrackStatus.textContent = "Detecting speakers and sounds on your PC.";
     try {
         const result = await api("/api/edit/" + session.path + "/audio-tracks", jsonRequest("POST", {
             start: trim.start + at, end: trim.start + end, revision: session.clip.file_revision || "",
@@ -326,7 +346,7 @@ byId("editor-scan-audio").addEventListener("click", async ({currentTarget}) => {
                 : error.message;
         }
     } finally {
-        if (editSession === session) currentTarget.disabled = false;
+        if (editSession === session) setAudioScanRunning(false);
     }
 });
 

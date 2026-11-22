@@ -180,7 +180,7 @@ def fill_available_ranges(selected, transcript, duration, clip_min, clip_max, co
     return selected
 
 
-POST_KIT_VERSION = 2
+POST_KIT_VERSION = 3
 POST_KIT_FIELDS = {
     "title": 95,
     "hook": 66,
@@ -220,14 +220,22 @@ def posting_excerpt(clip, transcript):
     ).strip()[:6500]
 
 
+def post_text(value, limit):
+    if isinstance(value, str):
+        value = re.sub(r"(?<!\S)#[^\W_][\w]*", "", value)
+    return text_field(value, limit)
+
+
 def normalize_post_draft(raw, source_text, music_tracks):
     draft = {name: text_field(raw.get(name), limit) for name, limit in POST_KIT_FIELDS.items()}
+    for field in ("title", "hook", "caption_lead", "caption_body", "caption_cta", "pinned_comment"):
+        draft[field] = post_text(raw.get(field), POST_KIT_FIELDS[field])
     variants = raw.get("title_variants", [])
     draft["title_variants"] = []
     seen_titles = {re.sub(r"[\W_]+", "", draft["title"].casefold())}
     if isinstance(variants, list):
         for variant in variants:
-            title = text_field(variant, 95)
+            title = post_text(variant, 95)
             token = re.sub(r"[\W_]+", "", title.casefold())
             if token and token not in seen_titles:
                 draft["title_variants"].append(title)
@@ -269,7 +277,7 @@ def missing_post_fields(draft):
     return missing
 
 
-def generate_post_copy(clip, transcript, source_title, settings, music_tracks=(), *, excerpt=None, notes=""):
+def generate_post_copy(clip, transcript, source_title, settings, music_tracks=(), *, excerpt=None, notes="", researched_hashtags=()):
     excerpt = posting_excerpt(clip, transcript) if excerpt is None else excerpt
     notes = text_field(notes, 800)
     source_text = f"{notes}\n{excerpt}".strip()
@@ -287,23 +295,27 @@ def generate_post_copy(clip, transcript, source_title, settings, music_tracks=()
     prompt = (
         "Write a publishing kit for one YouTube Short. Match the language of the notes or transcript. "
         "Source label identifies the topic only. Use clip notes and transcript as evidence for what happens. "
+        "Stay with actions explicitly described in the notes or transcript. Never turn walking into a chase or a look into a reveal. "
         "Never infer scenes, game versions, official status, stats or quotes from a source label. "
         "If the transcript is sparse or noisy, trust specific creator notes and keep claims narrow.\n"
-        "Title: a short, concrete curiosity hook with the subject and a detail the clip delivers. "
-        "Title_variants: two alternatives with clearly different angles, such as a specific question and a practical takeaway. "
-        "Hook: a short on-screen line for the first two seconds. "
-        "Caption_lead: one opening line that names the subject and invites the viewer in. "
-        "Caption_body: two specific sentences, around 30–55 words together, about the action and payoff. "
-        "Caption_cta: one simple, on-topic question inviting viewers to choose, notice, or predict something. "
-        "Pinned_comment: a different question that can start a discussion. "
-        "Tags: 3–5 closely related hashtags, combining the subject, niche, and activity. "
+        "Title: name the subject early and tease a specific choice, contrast, or payoff supported by the clip. "
+        "Title_variants: two genuinely different angles on the same moment. Use an observation, a question, or a practical takeaway. "
+        "Hook: one short on-screen line for the first two seconds. Start with a concrete action, detail, or question. "
+        "Avoid stock openers such as 'discover', 'explore', and unsourced superlatives like 'ultimate' or 'the best'. "
+        "Caption_lead: introduce the tension or interesting detail in one line. "
+        "Caption_body: two concrete sentences about what changes and why the payoff matters. "
+        "Caption_cta: one question offering specific choices or asking viewers to notice or predict a detail. "
+        "Pinned_comment: ask about a different detail than the caption question and invite a reason, an example, or a counterpoint. "
+        "Tags: 3–5 closely related hashtags, combining the subject, niche, and activity. Put hashtags only in the tags array. "
         "Skip generic reach-bait such as viral, fyp, trending, and shorts. "
+        "Prefer any supplied YouTube hashtags that match the clip. Treat them as search evidence only. "
         "Audience: who would care about this particular clip. "
         "Posting_tip and editing_tip: concrete suggestions tied to its moment. "
         "Evidence: copy a short continuous phrase exactly as written in the notes or transcript. "
         "Optional music_brief and sound_effect_prompt may be empty. "
         "Music_track must be an exact match from the local library or empty. Never claim predicted virality or tag popularity.\n"
         f"Source label: {text_field(source_title, 180)}\n"
+        f"YouTube hashtags found on related public videos: {json.dumps(list(researched_hashtags), ensure_ascii=False)}\n"
         f"Local music titles: {json.dumps(list(music_tracks)[:30], ensure_ascii=False)}\n"
         f"Creator notes: {notes or '(none)'}\nClip transcript: {excerpt or '(none)'}"
     )

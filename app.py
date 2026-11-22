@@ -40,6 +40,7 @@ from core.clip_editor import (
 from core.downloader import DOWNLOADS_DIR, clear_all_downloads_detailed, get_downloads_storage_info, sanitize_filename
 from core.editor_speech import installed_voices, synthesize_speech
 from core.editor_visuals import FRAMES, REACTIONS, REACTION_DURATION, frame_gif, reaction_gif
+from core.hashtag_research import YouTubeSearchUnavailable, research_youtube_hashtags
 from core.job_queue import DuplicateJob, JobQueue
 from core.publisher import posting_metadata, read_caption_context, write_clip_metadata
 from core.studio_pipeline import run_job, transcribe_range
@@ -121,6 +122,10 @@ class ClipRequest(BaseModel):
 
 class PostingKitRequest(BaseModel):
     notes: str = Field(default="", max_length=800)
+
+
+class HashtagSearchRequest(BaseModel):
+    topic: str = Field(min_length=2, max_length=120)
 
 
 @contextmanager
@@ -827,24 +832,59 @@ def search_library(
     }
 
 
+@contextmanager
+def posting_kit_update(video):
+    if not POSTING_KIT_LOCK.acquire(blocking=False):
+        raise HTTPException(409, "Another posting kit is being updated. Try again when it finishes.")
+
+    try:
+        with JOB_QUEUE.gate:
+            if not video.is_file():
+                raise HTTPException(404, "The clip was removed.")
+            revision = video.stat().st_mtime_ns
+            metadata = read_json(video.with_suffix(".json"))
+        yield metadata
+        with JOB_QUEUE.gate:
+            if not video.is_file():
+                raise HTTPException(404, "The clip was removed while the kit was updating.")
+            if video.stat().st_mtime_ns != revision:
+                raise HTTPException(409, "The clip changed while the kit was updating. Reopen it and try again.")
+            write_clip_metadata(video.with_suffix(".json"), metadata)
+    finally:
+        POSTING_KIT_LOCK.release()
+
+
+@app.post("/api/posting-kit/{folder_name}/{filename}/hashtags")
+def refresh_posting_hashtags(folder_name: str, filename: str, request: HashtagSearchRequest):
+    topic = " ".join(request.topic.split())
+    if len(topic) < 2 or not any(char.isalnum() for char in topic):
+        raise HTTPException(422, "Enter a short topic to search on YouTube.")
+    video = exported_video(folder_name, filename)
+    with posting_kit_update(video) as metadata:
+        info = read_json(video.parent / "info.json")
+        source_url = metadata.get("source_url") or info.get("youtube_url", "")
+        try:
+            research = research_youtube_hashtags(topic, youtube_video_id(urlparse(source_url)))
+        except YouTubeSearchUnavailable:
+            raise HTTPException(503, "YouTube search is unavailable. Your saved hashtags are unchanged.") from None
+        if not research["entries"]:
+            raise HTTPException(404, "No matching hashtags appeared in these YouTube results. Try a more specific topic.")
+        metadata["hashtag_research"] = research
+    return research
+
+
 @app.post("/api/posting-kit/{folder_name}/{filename}")
 def refresh_posting_kit(folder_name: str, filename: str, request: PostingKitRequest):
     video = exported_video(folder_name, filename)
-    folder = video.parent
-    if not POSTING_KIT_LOCK.acquire(blocking=False):
-        raise HTTPException(409, "A posting kit is already generating. Try again when it finishes.")
-
-    try:
-        output = video.with_suffix(".json")
-        revision = video.stat().st_mtime_ns
-        metadata = read_json(output)
-        info = read_json(folder / "info.json")
+    with posting_kit_update(video) as metadata:
+        info = read_json(video.parent / "info.json")
         label = info.get("source_title") or video.stem
         context = metadata.get("posting_context") or (
             "" if metadata.get("selection") == "edited" else read_caption_context(video.with_suffix(".ass"))
         )
         copy = generate_post_copy(
             {}, [], label, load_settings(), tuple(list_music()), excerpt=context, notes=request.notes,
+            researched_hashtags=tuple(entry["tag"] for entry in metadata.get("hashtag_research", {}).get("entries", [])),
         )
         if copy["copy_source"] == "no_transcript":
             raise HTTPException(422, "Add a note describing what actually happens in this clip, then try again.")
@@ -853,18 +893,9 @@ def refresh_posting_kit(folder_name: str, filename: str, request: PostingKitRequ
         if metadata.get("copy_ready") and not copy["copy_ready"]:
             raise HTTPException(502, "The new draft was incomplete. Your previous kit is still saved.")
 
-        updated = metadata | posting_metadata(copy, label, metadata.get("source_url") or info.get("youtube_url", ""))
-        updated["copy_needs_review"] = False
-        with JOB_QUEUE.gate:
-            if not video.is_file():
-                raise HTTPException(404, "The clip was removed while the kit was generating.")
-            if video.stat().st_mtime_ns != revision:
-                raise HTTPException(409, "The clip changed while the kit was generating. Reopen it and try again.")
-            write_clip_metadata(output, updated)
-        updated.pop("posting_context", None)
-        return updated | {"filename": video.name}
-    finally:
-        POSTING_KIT_LOCK.release()
+        metadata.update(posting_metadata(copy, label, metadata.get("source_url") or info.get("youtube_url", "")))
+        metadata["copy_needs_review"] = False
+    return public_clip(metadata | {"filename": video.name})
 
 
 def next_clip_version(video, base_name):
@@ -970,20 +1001,23 @@ def process_job(job_id, payload, preferences):
     return run_job(job_id, request, settings, update, cleanup)
 
 
+def youtube_video_id(url):
+    route = url.path.strip("/").split("/")
+    if url.hostname == "youtu.be":
+        return route[0]
+    if url.path == "/watch":
+        return parse_qs(url.query).get("v", [""])[0]
+    if len(route) == 2 and route[0] in {"shorts", "embed", "live"}:
+        return route[1]
+    return ""
+
+
 def clip_job_identity(request, settings):
     if request["source_type"] == "edit":
         return "edit", request, {}
     if request["source_type"] == "url":
         url = urlparse(request["url"])
-        route = url.path.strip("/").split("/")
-        if url.hostname == "youtu.be":
-            video_id = route[0]
-        elif url.path == "/watch":
-            video_id = parse_qs(url.query).get("v", [""])[0]
-        elif len(route) == 2 and route[0] in {"shorts", "embed", "live"}:
-            video_id = route[1]
-        else:
-            video_id = ""
+        video_id = youtube_video_id(url)
         source = video_id if re.fullmatch(r"[\w-]{11}", video_id, flags=re.ASCII) else url._replace(fragment="").geturl()
     else:
         source = os.path.normcase(request["file_path"])

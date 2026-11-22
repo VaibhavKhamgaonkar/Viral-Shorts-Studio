@@ -307,7 +307,7 @@ async function startJob(event) {
     }
 }
 
-function clipCard(clip, folder) {
+function clipCard(clip, folder, sourceTitle) {
     const clipPath = encodeURIComponent(folder) + "/" + encodeURIComponent(clip.filename);
     const uri = "/clips/" + clipPath + (clip.file_revision ? "?v=" + encodeURIComponent(clip.file_revision) : "");
     const card = element("article", "clip");
@@ -326,7 +326,7 @@ function clipCard(clip, folder) {
     }
     body.append(element("code", "clip-filename", clip.filename));
     const actions = element("div", "clip-actions");
-    const kit = action("", (event) => openPostingKit(clip, folder, event.currentTarget), "copy");
+    const kit = action("", (event) => openPostingKit(clip, folder, sourceTitle, event.currentTarget), "copy");
     const edit = action("", () => openClipEditor(clip, clipPath, uri), "edit");
     const download = link("", uri, "download");
     download.download = clip.filename;
@@ -371,7 +371,7 @@ function batchCard(batch) {
         heading.append(source);
     }
     const grid = element("div", "batch-grid");
-    grid.append(...batch.clips.map((clip) => clipCard(clip, batch.folder_name)));
+    grid.append(...batch.clips.map((clip) => clipCard(clip, batch.folder_name, batch.source_title)));
     const buttons = element("div", "batch-toolbar");
     const folder = encodeURIComponent(batch.folder_name);
     buttons.append(

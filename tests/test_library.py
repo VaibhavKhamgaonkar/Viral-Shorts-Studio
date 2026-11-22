@@ -117,3 +117,26 @@ class LibraryTests(unittest.TestCase):
         with patch.object(app, "generate_post_copy", return_value=draft | {"copy_ready": False, "title": "Bad draft"}):
             self.assertEqual(self.client.post(url, json={}).status_code, 502)
         self.assertEqual(self.results()["batches"][0]["clips"][0]["title"], "Fix the loose crank")
+
+    def test_youtube_hashtags_refresh_independently_and_survive_draft_regeneration(self):
+        self.clip("Workshop_[bike]", 1010, title="Before", tags=["Cycling"],
+                  source_url="https://youtu.be/abcdefghijk", posting_context="Transcript stays local")
+        url = "/api/posting-kit/Workshop_[bike]/clip-01.mp4"
+        research = {"platform": "youtube", "entries": [{"tag": "BikeRepair", "video_id": "abcdefghij0"}]}
+        with patch.object(app, "research_youtube_hashtags", return_value=research) as search:
+            response = self.client.post(url + "/hashtags", json={"topic": "  Bicycle   repair  "})
+        self.assertEqual(response.status_code, 200, response.text)
+        search.assert_called_once_with("Bicycle repair", "abcdefghijk")
+
+        with patch.object(app, "research_youtube_hashtags", side_effect=app.YouTubeSearchUnavailable):
+            self.assertEqual(self.client.post(url + "/hashtags", json={"topic": "Bicycle repair"}).status_code, 503)
+        saved = self.results()["batches"][0]["clips"][0]
+        self.assertEqual(saved["hashtag_research"], research)
+        self.assertEqual(saved["tags"], ["Cycling"])
+
+        draft = {"title": "Fix the crank", "copy_source": "ai", "tags": ["CrankBolt"], "copy_ready": True}
+        with patch.object(app, "generate_post_copy", return_value=draft) as model:
+            refreshed = self.client.post(url, json={"notes": "The crank bolt is loose."})
+        self.assertEqual(refreshed.status_code, 200, refreshed.text)
+        self.assertEqual(model.call_args.kwargs["researched_hashtags"], ("BikeRepair",))
+        self.assertEqual(refreshed.json()["hashtag_research"], research)

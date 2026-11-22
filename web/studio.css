@@ -395,6 +395,14 @@ dialog::backdrop { background: #231a29b5; }
 .editor-document { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 10px; min-width: 0; }
 .editor-header h2 { font-size: 1.18rem; line-height: 1.15; letter-spacing: -.03em; flex: none; }
 #editor-source { max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: .8rem; }
+.editor-scan-indicator:not(:has(#editor-scan-badge:not([hidden]))) { position: absolute; }
+#editor-scan-badge:not([hidden]) { display: inline-flex; align-items: center; gap: 7px; padding: 4px 8px; border: 1px solid #c4d196; border-radius: 6px; background: #eef4db; color: #31440c; font-size: .76rem; font-weight: 650; white-space: nowrap; }
+#editor-scan-badge::before { content: ""; width: 11px; height: 11px; border: 2px solid #9baa71; border-top-color: #31440c; border-radius: 50%; }
+#editor-scan-time { font-variant-numeric: tabular-nums; min-width: 4ch; }
+@media (prefers-reduced-motion: no-preference) {
+    #editor-scan-badge::before { animation: scan-spin .85s linear infinite; }
+}
+@keyframes scan-spin { to { transform: rotate(1turn); } }
 .editor-export-controls { display: flex; align-items: center; gap: 6px; }
 .editor-export-controls select { width: auto; height: 38px; }
 .editor-export-controls .button { min-height: 38px; box-shadow: none; }
@@ -590,7 +598,19 @@ dialog::backdrop { background: #231a29b5; }
 .kit-hook .button { background: var(--plum-raised); color: #f8f2eb; border-color: #66536b; }
 .kit-hook .button:hover { color: var(--accent); }
 .kit-tags { display: flex; flex-wrap: wrap; gap: 5px; margin: 7px 0 0; padding: 0; list-style: none; }
-.kit-tags li { max-width: 100%; border: 1px solid #d4ddaf; border-radius: 5px; padding: 3px 6px; background: #f0f5df; color: #31440c; font-size: .76rem; font-weight: 650; }
+.kit-tags li { max-width: 100%; border: 1px solid var(--line); border-radius: 5px; background: var(--paper); color: var(--ink); font-size: .76rem; font-weight: 650; }
+.kit-tags li > :is(a, span) { display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px; }
+.kit-tags .kit-tag-sourced { border-color: #d4ddaf; background: #f0f5df; color: #31440c; }
+.kit-tags a { color: inherit; }
+.kit-tags .icon { width: 12px; height: 12px; flex: none; }
+.kit-hashtags .kit-muted { font-size: .76rem; }
+.kit-hashtag-search { display: grid; gap: 5px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.kit-hashtag-search label { font-size: .78rem; font-weight: 650; }
+.kit-hashtag-controls { display: flex; flex-wrap: wrap; gap: 6px; }
+.kit-hashtag-controls input { flex: 1 1 10ch; min-width: 0; min-height: 36px; padding-inline: 8px; font-size: .81rem; }
+.kit-hashtag-controls .button { min-height: 36px; margin: 0; }
+.kit-hashtag-search p { margin-top: 0; }
+.kit-empty + .kit-hashtags { margin-top: 10px; }
 .kit-review { margin: 0 0 12px; padding: 8px 10px; background: #f3eee6; border-radius: 6px; }
 .kit-notes, .kit-guidance { margin-top: 10px; }
 .kit-notes .field { margin: 9px 0 0; }

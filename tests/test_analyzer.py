@@ -82,8 +82,8 @@ class HighlightTests(unittest.TestCase):
             "hook": "Listen to that click",
             "caption_lead": "The bike clicks on every pedal stroke.",
             "caption_body": "The rider tightens a loose crank bolt and spins the pedals again. Listen for the difference on the second pass.",
-            "caption_cta": "Which pass sounds better?",
-            "pinned_comment": "How do you diagnose a noisy crank?",
+            "caption_cta": "Which pass sounds better? #Cycling",
+            "pinned_comment": "How do you diagnose a noisy crank? #BikeRepair",
             "tags": ["#viral", "#BikeRepair", "#bikerepair", "Cycling", "CrankBolt"],
             "audience": "Cyclists maintaining their own bikes",
             "posting_tip": "Open on the clicking sound",
@@ -98,6 +98,8 @@ class HighlightTests(unittest.TestCase):
             self.assertIn("schema", local.call_args.kwargs)
         self.assertTrue(copy["copy_ready"])
         self.assertEqual(copy["tags"], ["BikeRepair", "Cycling", "CrankBolt"])
+        self.assertEqual(copy["caption_cta"], "Which pass sounds better?")
+        self.assertEqual(copy["pinned_comment"], "How do you diagnose a noisy crank?")
         self.assertEqual(copy["title_variants"], ["Diagnose a noisy crank", "One wrench fixed the wobble"])
         self.assertEqual(len(copy["description"].split("\n\n")), 3)
         self.assertEqual(copy["evidence"], "tightens a loose crank bolt")
