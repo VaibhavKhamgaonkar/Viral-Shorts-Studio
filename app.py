@@ -12,6 +12,7 @@ import threading
 import time
 import uuid
 import wave
+import webbrowser
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -1150,5 +1151,48 @@ def dismiss_job(job_id: str):
     return {"status": "ok"}
 
 
+def launch_studio(open_browser=False):
+    host, port = "127.0.0.1", 8000
+    url = f"http://{host}:{port}"
+    try:
+        response = requests.get(url + "/openapi.json", timeout=2)
+    except requests.ConnectionError:
+        response = None
+    except requests.RequestException:
+        print(f"Could not verify the service on {url}. Close that instance before launching this studio.")
+        return 1
+
+    if response is not None:
+        try:
+            schema = response.json()
+        except ValueError:
+            schema = {}
+        paths = schema.get("paths", {}) if isinstance(schema, dict) else {}
+        if not response.ok or "/api/edit/{folder_name}/{filename}/audio-tracks" not in paths:
+            print(f"Port {port} is in use by an older studio or another app. Close it before launching this version.")
+            return 1
+        print(f"The studio is already running at {url}. Using the existing instance.")
+        if open_browser:
+            webbrowser.open(url)
+        return 0
+
+    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port))
+    finished = threading.Event()
+
+    def open_when_ready():
+        while not finished.wait(.1):
+            if server.started:
+                webbrowser.open(url)
+                return
+
+    if open_browser:
+        threading.Thread(target=open_when_ready, daemon=True).start()
+    try:
+        server.run()
+        return 0 if server.started else 1
+    finally:
+        finished.set()
+
+
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    sys.exit(launch_studio(open_browser="--open-browser" in sys.argv[1:]))

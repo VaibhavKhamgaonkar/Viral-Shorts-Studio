@@ -68,14 +68,12 @@ echo.
 
 :START_STUDIO
 echo =================================================================
-echo [*] Starting Studio Web Dashboard at: http://localhost:8000
-echo [*] Opening your browser...
+echo [*] Opening Studio Web Dashboard at: http://127.0.0.1:8000
 echo =================================================================
 echo [NOTE] Keep this window open while using the studio.
 echo.
 
-start http://localhost:8000
-python app.py
+python app.py --open-browser
 
 if errorlevel 1 (
     echo.

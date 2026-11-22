@@ -6,7 +6,7 @@ A local video clipping workspace for YouTube links and video files. Select a pre
 
 1. Clone the repository or download and extract its ZIP. Open the folder that contains `start_web.bat`.
 2. Install Python 3.10 or newer and enable **Add Python to PATH** in the Windows installer. Use an FFmpeg build with libass for captions. Install it on PATH or place `ffmpeg.exe` in the project’s `bin` folder. The launcher attempts to install FFmpeg via WinGet if it cannot find it.
-3. Double-click [`start_web.bat`](start_web.bat) and keep its terminal open. It creates a Python environment if needed, installs dependencies, and starts the app at [http://localhost:8000](http://localhost:8000). Refresh the browser if it opens before the server is ready.
+3. Double-click [`start_web.bat`](start_web.bat) and keep its terminal open. It creates a Python environment if needed, installs dependencies, and opens the app at [http://127.0.0.1:8000](http://127.0.0.1:8000) when it is ready. Opening the launcher again reuses a running studio. After pulling an update, stop the existing studio after its jobs finish, then launch it again.
 
 The web interface uses HTML, CSS, and JavaScript served by the Python app. A regular browser runs the interface without Node.js, npm, or a frontend build.
 

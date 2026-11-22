@@ -321,7 +321,9 @@ byId("editor-scan-audio").addEventListener("click", async ({currentTarget}) => {
     } catch (error) {
         if (editSession === session) {
             if (session.audioTrackScan) renderDetectedTracks(session.audioTrackScan);
-            sourceTrackStatus.textContent = error.message;
+            sourceTrackStatus.textContent = error.message === "Not Found"
+                ? "This studio server is missing the audio scan. Restart it with start_web.bat, then reopen this clip."
+                : error.message;
         }
     } finally {
         if (editSession === session) currentTarget.disabled = false;
