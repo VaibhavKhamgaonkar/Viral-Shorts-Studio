@@ -122,18 +122,30 @@ Open [Publishing destinations in your local studio](http://127.0.0.1:8000/settin
 
 #### Connect Facebook and Instagram
 
-1. Use a Facebook Page you can publish to. To add Instagram, switch Instagram to a professional account and link it to that Facebook Page.
-2. In [Meta My Apps](https://developers.facebook.com/apps/), choose **Create App**. Look under **Content management** for **Manage everything on your Page**. For Instagram on the same app, choose **Instagram API with Facebook Login**.
-3. Open [Graph API Explorer](https://developers.facebook.com/tools/explorer/), choose your app in the **Meta App** dropdown, then choose **User or Page → Get User Access Token**. Select the permissions below, click **Generate Access Token**, and approve access to the Page in the Meta prompt. Copy the token shown in Graph API Explorer.
-4. Back in the studio, open **Set up Facebook & Instagram**, paste the token into **User Token from Meta**, and click **Find my Pages**. Choose your Page by name and click **Connect this Page**. The card shows the Page and any linked Instagram account it can publish to.
+##### Get your access token in Graph API Explorer
+
+1. Open [Graph API Explorer](https://developers.facebook.com/tools/explorer/). Use the **right-hand panel**. Under **Meta App**, select the app you created for publishing.
+2. Under **User or Page**, click the dropdown that initially says **Get Token**. Choose **Get User Access Token**.
+3. Select the **Permissions** tab. Open **Add a Permission** and add each entry needed from the table below.
+4. Click **Generate Access Token** in the same panel. In the Facebook prompt, continue as the account that manages your Page and grant access to that Page if Meta asks.
+5. When the prompt closes, the token appears in the **Access Token** field at the top of the right-hand panel, above **Generate Access Token**. Click the copy icon beside that field.
+6. Back in [the studio’s Facebook and Instagram setup](http://127.0.0.1:8000/settings#meta-setup), paste it into **User Access Token from Meta**. Click **Find my Pages**, choose your Page, then click **Connect this Page**. The studio uses the User Access Token to find your Pages and obtains the selected Page’s token during connection.
 
 | What you want to connect | Permissions to select in Graph API Explorer |
 | --- | --- |
-| Find your Pages | `pages_show_list`, `pages_read_engagement` |
+| Connect either platform | `pages_show_list`, `pages_read_engagement` |
 | Publish Facebook Reels | Add `pages_manage_posts` |
 | Publish Instagram Reels | Add `instagram_basic` and `instagram_content_publish` |
 
-If you don’t see a permission in the Explorer, check the selected Meta app, its use cases, and your app role. If your Page is missing from the studio picker, generate a new User Token and grant access to that Page in the Meta prompt. [Graph API Explorer guide](https://developers.facebook.com/docs/graph-api/guides/explorer/) · [Instagram publishing](https://developers.facebook.com/documentation/instagram-platform/content-publishing/) · [Facebook Reels publishing](https://developers.facebook.com/documentation/video-api/guides/reels-publishing)
+##### If you’re missing a control
+
+- **Add a Permission only shows `business_management` and `pages_show_list`.** These two can be defaults for Meta’s Page use case. In [Meta My Apps](https://developers.facebook.com/apps/), open the same app and go to **Use cases → Manage everything on your Page → Customize → Permissions and features**. Add `pages_read_engagement` and `pages_manage_posts`. If the Page use case is missing, check **Add use cases**. Meta only shows use cases compatible with your existing app. If the Page use case is unavailable there, create an app with that use case and select it in Explorer. Return to Explorer and regenerate the token with the added permissions. [Meta’s app setup guide](https://developers.facebook.com/documentation/development/create-an-app)
+- **Your app isn’t listed under Meta App.** Open [Meta My Apps](https://developers.facebook.com/apps/) and sign in with the account that has a role on the app. If you haven’t created one, choose **Create App** and look under **Content management** for **Manage everything on your Page**.
+- **Generate Access Token is greyed out.** Open **Get Token** and choose the user-token option first. Check that the intended app is selected. If the dropdown offers no user-token option, check the app’s use cases and your app role in Meta My Apps.
+- **A publishing permission is missing.** Check the selected app’s **Use cases** in its dashboard. For this studio’s Instagram connection, configure **Instagram API with Facebook Login**. It uses `instagram_basic` and `instagram_content_publish`. Reopen Explorer, select your app, and generate a new token after changing permissions.
+- **Find my Pages shows an empty list.** Generate a fresh User Access Token and grant access to the Page in the Facebook prompt. The signed-in Facebook account must be able to publish to the Page. For Instagram to appear, link a professional Instagram account to that Page.
+
+The Explorer’s **Submit** button runs the API query in the top bar. You can copy the generated token as soon as it appears. Keep the token private. [Meta Graph API Explorer guide](https://developers.facebook.com/docs/graph-api/guides/explorer/) · [Meta token selection](https://developers.facebook.com/docs/graph-api/webhooks/getting-started/webhooks-for-pages) · [Instagram publishing permissions](https://developers.facebook.com/documentation/instagram-platform/content-publishing/)
 
 #### Upload a clip
 
