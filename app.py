@@ -17,20 +17,20 @@ from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Literal
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import av
 import numpy as np
 import requests
 import uvicorn
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, Response
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
 from starlette.background import BackgroundTask
 
 from config.settings import load_settings, save_settings
-from config.studio import Layout, StudioSettings, studio_settings
+from config.studio import Layout, Platform, StudioSettings, studio_settings
 from core.analyzer import generate_post_copy
 from core.audio_breakdown import read_audio, write_audio
 from core.clip_editor import (
@@ -43,6 +43,7 @@ from core.editor_visuals import FRAMES, REACTIONS, REACTION_DURATION, frame_gif,
 from core.hashtag_research import YouTubeSearchUnavailable, research_youtube_hashtags
 from core.job_queue import DuplicateJob, JobQueue
 from core.publisher import posting_metadata, read_caption_context, write_clip_metadata
+from core.social_upload import PLATFORMS, PublishError, PublishStore
 from core.studio_pipeline import run_job, transcribe_range
 from core.transformer import AUDIO_EXTENSIONS, MUSIC_DIR, OUTPUT_DIR, asset_files, get_ffmpeg_cmd, inspect_media
 
@@ -56,6 +57,7 @@ AUDIO_MODELS_DIR = BASE_DIR / "data" / "audio-models"
 INSERT_EXTENSIONS = {".mp4", ".webm"}
 UPLOAD_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
 JOB_QUEUE = JobQueue(BASE_DIR / "data" / "jobs.sqlite3")
+PUBLISHING = PublishStore(BASE_DIR / "data" / "publishing")
 SETTINGS_LOCK = threading.Lock()
 POSTING_KIT_LOCK = threading.Lock()
 EDITOR_PREVIEW_LOCK = threading.Lock()
@@ -63,6 +65,16 @@ EDITOR_CAPTIONS_LOCK = threading.Lock()
 EDITOR_STEMS_LOCK = threading.Lock()
 EDITOR_TRACKS_LOCK = threading.Lock()
 LOGGER = logging.getLogger(__name__)
+
+
+class OAuthAccessLogFilter(logging.Filter):
+    def filter(self, record):
+        args = record.args
+        return not (isinstance(args, tuple) and len(args) >= 3
+                    and str(args[2]).startswith("/api/publishing/youtube/callback"))
+
+
+logging.getLogger("uvicorn.access").addFilter(OAuthAccessLogFilter())
 
 
 @asynccontextmanager
@@ -128,6 +140,32 @@ class HashtagSearchRequest(BaseModel):
     topic: str = Field(min_length=2, max_length=120)
 
 
+class YouTubeClient(BaseModel):
+    client_id: str = Field(max_length=250, pattern=r"^[A-Za-z0-9_-]+\.apps\.googleusercontent\.com$")
+    client_secret: str
+
+
+class MetaConnection(BaseModel):
+    page_id: str = Field(max_length=32, pattern=r"^[0-9]+$")
+    user_token: str
+
+
+class PublishClip(BaseModel):
+    filename: str = Field(min_length=5, max_length=250)
+    revision: str = Field(max_length=32, pattern=r"^[0-9]+$")
+    title: str = Field(min_length=1, max_length=100)
+    description: str = Field(default="", max_length=5000)
+
+
+class PublishBatch(BaseModel):
+    clips: list[PublishClip] = Field(min_length=1, max_length=25)
+    destinations: dict[Platform, str] = Field(min_length=1, max_length=3)
+    rights_confirmed: Literal[True]
+    visibility: Literal["private", "unlisted", "public"] = "private"
+    made_for_kids: bool | None = None
+    synthetic_media: bool
+
+
 @contextmanager
 def idle_workspace():
     with JOB_QUEUE.gate:
@@ -171,6 +209,123 @@ def batch_task_id(folder, info):
 @app.get("/library", include_in_schema=False)
 def index():
     return FileResponse(WEB_DIR / "index.html")
+
+
+def publishing_origin(request: Request):
+    if request.url.scheme != "http" or request.url.hostname not in {"127.0.0.1", "localhost"}:
+        raise HTTPException(403, "Open the studio at http://127.0.0.1:8000 to manage publishing.")
+    origin = f"http://{request.url.netloc}"
+    if request.method != "GET" and request.headers.get("origin") not in {None, origin}:
+        raise HTTPException(403, "Open publishing from the local studio.")
+    return origin
+
+
+@app.get("/api/publishing")
+def get_publishing(_origin: str = Depends(publishing_origin)):
+    try:
+        return {"accounts": PUBLISHING.public(),
+                "defaults": {key: destination.enabled for key, destination in studio_settings(load_settings()).destinations.items()}}
+    except PublishError as error:
+        raise HTTPException(503, str(error)) from None
+
+
+@app.post("/api/publishing/youtube/connect")
+def connect_youtube(client: YouTubeClient, origin: str = Depends(publishing_origin)):
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,250}", client.client_secret):
+        raise HTTPException(422, "Choose a valid Google Desktop app OAuth client JSON.")
+    url = PUBLISHING.start_youtube(client.model_dump(), origin + "/api/publishing/youtube/callback")
+    return {"authorization_url": url}
+
+
+@app.get("/api/publishing/youtube/callback", include_in_schema=False)
+def youtube_callback(state: str = "", code: str = "", origin: str = Depends(publishing_origin)):
+    try:
+        PUBLISHING.finish_youtube(state, code, origin + "/api/publishing/youtube/callback")
+    except PublishError as error:
+        target = "/settings?" + urlencode({"publishing_error": str(error)})
+    else:
+        target = "/settings?publishing_connected=youtube"
+    return RedirectResponse(target, status_code=303, headers={"Referrer-Policy": "no-referrer", "Cache-Control": "no-store"})
+
+
+@app.post("/api/publishing/meta/connect")
+def connect_meta(connection: MetaConnection, _origin: str = Depends(publishing_origin)):
+    if not re.fullmatch(r"[A-Za-z0-9_.|+-]{10,4096}", connection.user_token):
+        raise HTTPException(422, "Enter a valid Meta User access token.")
+    try:
+        PUBLISHING.connect_meta(connection.page_id, connection.user_token)
+        return {"accounts": PUBLISHING.public()}
+    except PublishError as error:
+        raise HTTPException(422, str(error)) from None
+
+
+@app.delete("/api/publishing/{service}")
+def disconnect_publishing(service: Literal["youtube", "meta"], _origin: str = Depends(publishing_origin)):
+    try:
+        PUBLISHING.save_connection(service, None)
+    except PublishError as error:
+        raise HTTPException(503, str(error)) from None
+    return {"accounts": PUBLISHING.public()}
+
+
+@app.post("/api/publishing/batch/{folder_name}")
+def queue_publication(folder_name: str, batch: PublishBatch, _origin: str = Depends(publishing_origin)):
+    if "youtube" in batch.destinations and batch.made_for_kids is None:
+        raise HTTPException(422, "Choose the YouTube audience setting for these uploads.")
+    with JOB_QUEUE.gate:
+        try:
+            return submit_publication(folder_name, batch)
+        except PublishError as error:
+            raise HTTPException(422, str(error)) from None
+
+
+def submit_publication(folder_name, batch):
+    accounts = PUBLISHING.public()
+    for platform, account_id in batch.destinations.items():
+        if accounts.get(platform, {}).get("id") != account_id:
+            raise PublishError(f"The {PLATFORMS[platform]} connection changed. Reopen publishing and review the destination.")
+
+    jobs, results, seen = [], [], set()
+    for clip in batch.clips:
+        video = exported_video(folder_name, clip.filename)
+        if str(video.stat().st_mtime_ns) != clip.revision:
+            raise PublishError(f"{video.name} changed. Refresh the clip library and select the current export.")
+        if not clip.title.strip():
+            raise PublishError("Enter a title for each selected clip.")
+        if video.name in seen:
+            continue
+        seen.add(video.name)
+        if "youtube" in batch.destinations and (len(clip.description.encode("utf-8")) > 5000
+                or any(char in clip.title + clip.description for char in "<>")):
+            raise PublishError("YouTube accepts up to 5,000 description bytes. Remove angle brackets from the title and description.")
+        if "instagram" in batch.destinations and len(clip.description) > 2200:
+            raise PublishError("Instagram captions can be up to 2,200 characters.")
+        for platform, account_id in batch.destinations.items():
+            key = hashlib.sha256(json.dumps((folder_name, video.name, clip.revision, platform, account_id)).encode()).hexdigest()
+            receipt = PUBLISHING.receipt(key)
+            if receipt.get("complete"):
+                results.append({"platform": platform, "filename": video.name, "status": "uploaded", "url": receipt["url"]})
+                continue
+            submission = {"title": clip.title.strip(), "description": clip.description,
+                          "synthetic_media": batch.synthetic_media}
+            if platform == "youtube":
+                submission.update(visibility=batch.visibility, made_for_kids=batch.made_for_kids)
+            if any(receipt.get(field) for field in ("session", "video_id", "container")) and receipt["submission"] != submission:
+                raise PublishError(f"{video.name} has a {PLATFORMS[platform]} upload in progress. Use its original posting details to resume.")
+            jobs.append({"source_type": "publish", "key": key, "platform": platform, "account_id": account_id,
+                         "folder": video.parent.name, "filename": video.name, "revision": clip.revision, "submission": submission})
+
+    for payload in jobs:
+        platform = payload["platform"]
+        source = f"{PLATFORMS[platform]} · {payload['submission']['title']}"
+        try:
+            job_id = JOB_QUEUE.submit(source, payload, {}, identity=clip_job_identity)
+            status = "queued"
+        except DuplicateJob as error:
+            job_id = error.job_id
+            status = "active"
+        results.append({"job_id": job_id, "platform": platform, "filename": payload["filename"], "status": status})
+    return {"uploads": results}
 
 
 @app.get("/api/settings")
@@ -984,6 +1139,17 @@ def process_job(job_id, payload, preferences):
 
     if payload["source_type"] == "edit":
         return process_edit(payload, update)
+    if payload["source_type"] == "publish":
+        try:
+            video = exported_video(payload["folder"], payload["filename"])
+        except HTTPException:
+            raise PublishError("The clip was removed before its upload started.") from None
+        if payload["platform"] == "facebook":
+            duration, _ = inspect_media(video)
+            if not 3 <= duration <= 90:
+                raise PublishError("Facebook Reels require a clip from 3 to 90 seconds. Trim this export and share the new version.")
+        receipt = PUBLISHING.upload(payload, video, update)
+        return {"url": receipt["url"], "batch_id": batch_task_id(video.parent, read_json(video.parent / "info.json"))}
 
     request = ClipRequest.model_validate(payload)
     settings = preferences | {"llm_api_key": load_settings()["llm_api_key"]}
@@ -1013,6 +1179,8 @@ def youtube_video_id(url):
 
 
 def clip_job_identity(request, settings):
+    if request["source_type"] == "publish":
+        return "publish", request["key"]
     if request["source_type"] == "edit":
         return "edit", request, {}
     if request["source_type"] == "url":
@@ -1202,7 +1370,12 @@ def launch_studio(open_browser=False):
         except ValueError:
             schema = {}
         paths = schema.get("paths", {}) if isinstance(schema, dict) else {}
-        if not response.ok or "/api/edit/{folder_name}/{filename}/audio-tracks" not in paths:
+        required_routes = {
+            "/api/edit/{folder_name}/{filename}/audio-tracks",
+            "/api/posting-kit/{folder_name}/{filename}/hashtags",
+            "/api/publishing",
+        }
+        if not response.ok or not required_routes.issubset(paths):
             print(f"Port {port} is in use by an older studio or another app. Close it before launching this version.")
             return 1
         print(f"The studio is already running at {url}. Using the existing instance.")

@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="/studio/studio.css">
     <script src="/studio/studio.js" defer></script>
     <script src="/studio/posting-kit.js" defer></script>
+    <script src="/studio/publishing.js" defer></script>
     <script src="/studio/clip-editor.js" defer></script>
     <script src="/studio/editor-visuals.js" defer></script>
     <script src="/studio/editor-timeline.js" defer></script>
@@ -255,14 +256,25 @@
                 </div>
             </section>
 
-            <section class="panel panel-plum settings-panel" aria-labelledby="publish-title">
+            <section id="publishing" class="panel panel-plum settings-panel" aria-labelledby="publish-title">
                 <h2 id="publish-title">Publishing destinations</h2>
-                <p class="section-copy">Account connection and automatic uploads are unavailable in this version. The details below are saved locally.</p>
-                <p class="section-copy" id="publish-default-help"><strong>Future default</strong> saves which accounts you want preselected once direct uploads are available.</p>
-                <div class="destination"><div class="field"><label for="youtube-account">YouTube channel</label><input id="youtube-account" maxlength="150" placeholder="@channel"></div><label class="check"><input type="checkbox" id="youtube-enabled" aria-label="YouTube future default" aria-describedby="publish-default-help"> Future default</label></div>
-                <div class="destination"><div class="field"><label for="instagram-account">Instagram profile</label><input id="instagram-account" maxlength="150" placeholder="@profile"></div><label class="check"><input type="checkbox" id="instagram-enabled" aria-label="Instagram future default" aria-describedby="publish-default-help"> Future default</label></div>
-                <div class="destination"><div class="field"><label for="facebook-account">Facebook Page</label><input id="facebook-account" maxlength="150" placeholder="Page name or ID"></div><label class="check"><input type="checkbox" id="facebook-enabled" aria-label="Facebook future default" aria-describedby="publish-default-help"> Future default</label></div>
-                <p class="publishing-help">Select <strong>Show in folder</strong> on a clip in the <a href="/library">Clip library</a>. Upload the selected MP4 through <a href="https://studio.youtube.com/" target="_blank" rel="noopener noreferrer">YouTube Studio</a> and use the <strong>AI posting kit</strong> for the title and description.</p>
+                <p class="section-copy" id="publish-default-help">Connect your accounts to publish directly from the clip library. Save your settings to preselect destinations for future uploads.</p>
+                <div class="destination"><div><strong>YouTube</strong><p id="youtube-connected" class="section-copy">Checking connection…</p><input id="youtube-account" type="hidden"></div><label class="check"><input type="checkbox" id="youtube-enabled" aria-label="Preselect YouTube"> Preselect</label></div>
+                <details class="publish-connection">
+                    <summary>Connect YouTube</summary>
+                    <div class="field"><label for="youtube-client-file">Google desktop OAuth client JSON</label><input type="file" id="youtube-client-file" accept=".json,application/json"></div>
+                    <div class="publish-controls"><button id="connect-youtube" class="button button-outline" type="button">Authorize with Google</button><button id="disconnect-youtube" class="button button-plain" type="button" hidden>Disconnect</button></div>
+                </details>
+                <div class="destination"><div><strong>Instagram</strong><p id="instagram-connected" class="section-copy">Checking connection…</p><input id="instagram-account" type="hidden"></div><label class="check"><input type="checkbox" id="instagram-enabled" aria-label="Preselect Instagram"> Preselect</label></div>
+                <div class="destination"><div><strong>Facebook</strong><p id="facebook-connected" class="section-copy">Checking connection…</p><input id="facebook-account" type="hidden"></div><label class="check"><input type="checkbox" id="facebook-enabled" aria-label="Preselect Facebook"> Preselect</label></div>
+                <details class="publish-connection">
+                    <summary>Connect a Facebook Page and linked Instagram account</summary>
+                    <div class="field"><label for="meta-page-id">Facebook Page ID</label><input id="meta-page-id" inputmode="numeric" maxlength="32"></div>
+                    <div class="field"><label for="meta-user-token">Meta User access token</label><input id="meta-user-token" type="password" autocomplete="off" maxlength="4096"></div>
+                    <div class="publish-controls"><button id="connect-meta" class="button button-outline" type="button">Connect Meta accounts</button><button id="disconnect-meta" class="button button-plain" type="button" hidden>Disconnect</button></div>
+                </details>
+                <p id="publish-connection-status" class="form-message" role="status" hidden></p>
+                <p class="publishing-help"><a href="https://github.com/VaibhavKhamgaonkar/Viral-Shorts-Studio#direct-upload-from-a-local-studio" target="_blank" rel="noopener noreferrer">Account setup guide</a> · <a href="/library">Clip library</a></p>
             </section>
 
             <div class="settings-actions"><button id="save-settings" class="button button-primary" type="submit">Save settings <svg class="icon"><use href="#i-arrow"/></svg></button><p id="settings-message" class="form-message" role="status" hidden></p></div>
@@ -290,6 +302,33 @@
             <div id="queue-recent" class="queue-list"></div>
         </section>
     </div>
+</dialog>
+<dialog id="publish-dialog" class="posting-kit publish-dialog" aria-labelledby="publish-dialog-title">
+    <header class="kit-header">
+        <div><h2 id="publish-dialog-title">Publish clips</h2><p id="publish-dialog-summary"></p></div>
+        <form method="dialog"><button class="button button-outline icon-button" type="submit" aria-label="Close publishing"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></form>
+    </header>
+    <div class="kit-scroll">
+        <p id="publish-dialog-loading" role="status">Checking connected accounts…</p>
+        <a href="/settings#publishing" id="publish-dialog-settings" class="button button-outline" hidden>Open publishing settings</a>
+        <form id="publish-form" hidden>
+            <fieldset class="publish-fieldset"><legend>Destinations</legend><div id="publish-targets"></div></fieldset>
+            <div id="publish-youtube-options" class="publish-options" hidden>
+                <div class="field"><label for="publish-visibility">YouTube visibility</label><select id="publish-visibility"><option value="private">Private</option><option value="unlisted">Unlisted</option><option value="public">Public</option></select></div>
+                <div class="field"><label for="publish-audience">YouTube audience</label><select id="publish-audience"><option value="">Choose an audience</option><option value="false">No, not made for kids</option><option value="true">Yes, made for kids</option></select></div>
+            </div>
+            <p id="publish-meta-note" class="kit-muted" hidden>Facebook Page Reels are public. Instagram Reels use the connected account’s visibility.</p>
+            <fieldset class="publish-fieldset"><legend>Clips</legend><div id="publish-clips"></div></fieldset>
+            <div class="publish-consent">
+                <label class="check"><input id="publish-synthetic" type="checkbox"> Disclose AI-generated or significantly altered media</label>
+                <label class="check"><input id="publish-rights" type="checkbox" required> I have permission to publish these clips and they follow the selected platforms’ community guidelines.</label>
+            </div>
+        </form>
+    </div>
+    <footer class="kit-footer">
+        <p id="publish-dialog-status" role="status"></p>
+        <div class="kit-footer-actions"><button type="submit" form="publish-form" id="publish-submit" class="button button-primary" disabled><svg class="icon" aria-hidden="true"><use href="#i-upload"/></svg> Upload selected</button></div>
+    </footer>
 </dialog>
 <dialog id="posting-kit" class="posting-kit" aria-labelledby="kit-title">
     <header class="kit-header">

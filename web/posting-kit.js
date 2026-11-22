@@ -249,7 +249,12 @@ async function findKitHashtags(event) {
             kitStatus("YouTube hashtags added to the post.");
         }
     } catch (error) {
-        if (activeKit === request && kitDialog.open) kitStatus(error.message, true);
+        if (activeKit === request && kitDialog.open) {
+            const detail = error.message === "Not Found"
+                ? "This studio server is missing hashtag search. Close the studio window, run start_web.bat, then reload this page."
+                : error.message;
+            kitStatus(detail, true);
+        }
     } finally {
         if (activeKit === request) {
             setKitPending(request, false);

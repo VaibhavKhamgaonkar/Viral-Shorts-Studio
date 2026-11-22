@@ -11,7 +11,11 @@ class StudioLaunchTests(unittest.TestCase):
     def test_existing_studio_reopens_without_starting_another_server(self, get, open_browser, server):
         get.return_value = Mock(ok=True)
         get.return_value.json.return_value = {
-            "paths": {"/api/edit/{folder_name}/{filename}/audio-tracks": {"post": {}}},
+            "paths": {
+                "/api/edit/{folder_name}/{filename}/audio-tracks": {"post": {}},
+                "/api/posting-kit/{folder_name}/{filename}/hashtags": {"post": {}},
+                "/api/publishing": {"get": {}},
+            },
         }
 
         self.assertEqual(app.launch_studio(open_browser=True), 0)
@@ -24,7 +28,7 @@ class StudioLaunchTests(unittest.TestCase):
     def test_older_studio_is_reported_without_starting_another_worker(self, get, open_browser, server):
         get.return_value = Mock(ok=True)
         get.return_value.json.return_value = {
-            "paths": {"/api/edit/{folder_name}/{filename}/separate-audio": {"post": {}}},
+            "paths": {"/api/edit/{folder_name}/{filename}/audio-tracks": {"post": {}}},
         }
 
         with patch("builtins.print") as print_status:

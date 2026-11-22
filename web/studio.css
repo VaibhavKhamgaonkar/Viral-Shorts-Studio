@@ -347,7 +347,9 @@ input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: var
 .clip-title { font-size: .9rem; }
 .clip-time { font-size: .76rem; color: var(--muted); }
 .clip-filename { align-self: flex-start; border-radius: 4px; padding: 2px 6px; background: #efe9e2; color: var(--ink); font: .74rem/1.4 var(--font-data); }
-.clip-actions { position: relative; display: grid; grid-template-columns: repeat(4, minmax(0, 44px)); gap: 5px; margin-top: auto; padding-top: 4px; }
+.clip-actions { position: relative; display: flex; flex-wrap: wrap; gap: 5px; margin-top: auto; padding-top: 4px; }
+.clip-actions .button { width: 36px; }
+.clip-actions .button:first-child { color: #33460c; background: #eef4db; border-color: #c8d3a2; }
 .clip-actions .button { min-height: 42px; padding: 0; }
 .clip-actions .button::after {
     content: attr(data-tooltip);
@@ -372,6 +374,24 @@ input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: var
 .destination .field { margin: 0; }
 .destination .check { min-height: 42px; }
 .publishing-help { border-top: 1px solid var(--line); padding-top: 12px; color: var(--muted); font-size: .87rem; }
+.publish-connection { border-top: 1px solid var(--line); margin-bottom: 14px; padding-top: 9px; }
+.publish-connection summary { font-size: .86rem; font-weight: 650; margin-bottom: 8px; cursor: pointer; }
+.publish-controls { display: flex; flex-wrap: wrap; gap: 8px; }
+.publish-dialog .kit-scroll { display: grid; gap: 10px; }
+#publish-dialog-summary { overflow-wrap: anywhere; }
+.publish-fieldset { border: 1px solid var(--line); border-radius: 9px; min-width: 0; margin: 0 0 12px; padding: 8px 12px 12px; }
+.publish-fieldset legend { padding-inline: 5px; font-size: .87rem; font-weight: 700; }
+#publish-targets { display: flex; flex-wrap: wrap; gap: 4px 18px; }
+#publish-targets .check:has(input:disabled) { color: var(--muted); }
+.publish-options, .publish-clip-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.publish-clip-row + .publish-clip-row { border-top: 1px solid var(--line); padding-top: 7px; }
+.publish-clip-row .check, .publish-clip-fields .field > span { font-weight: 650; }
+.publish-clip-fields .field { align-content: start; font-size: .86rem; }
+.publish-clip-fields textarea { width: 100%; min-height: 65px; resize: vertical; font: inherit; color: var(--ink); background: var(--paper); border: 1px solid var(--line); padding: 8px; border-radius: 6px; }
+.publish-consent .check { align-items: flex-start; margin-bottom: 5px; }
+.publish-consent input { margin-top: 3px; }
+#publish-meta-note { margin-bottom: 9px; }
+@media (max-width: 600px) { .publish-options, .publish-clip-fields { grid-template-columns: 1fr; gap: 0; } }
 .settings-actions { grid-column: 1 / -1; display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
 .settings-actions .form-message { margin: 0; }
 .upload-row { display: flex; gap: 6px; }

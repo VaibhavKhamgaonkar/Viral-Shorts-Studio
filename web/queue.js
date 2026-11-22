@@ -7,6 +7,7 @@ const phases = [
     ["export", "Copy & render"],
     ["finalize", "Save clips"],
 ];
+const publishPhases = [["source", "Account"], ["export", "Upload MP4"], ["finalize", "Confirm upload"]];
 const statusLabels = {queued: "Waiting", running: "Running", completed: "Ready", failed: "Stopped"};
 const knownJobs = new Map(JSON.parse(sessionStorage.getItem("studio-queue-status") || "[]"));
 let queueSnapshot = [];
@@ -48,15 +49,16 @@ function taskTimes(job) {
 function taskStages(job, history) {
     const steps = element("ol", "queue-steps");
     steps.setAttribute("aria-label", "Task stages");
-    const current = phases.findIndex(([key]) => key === job.phase);
-    for (const [index, [, title]] of phases.entries()) {
+    const plan = job.kind === "publish" ? publishPhases : phases;
+    const current = plan.findIndex(([key]) => key === job.phase);
+    for (const [index, [phase, title]] of plan.entries()) {
         const reached = index === current;
         const done = index < current || job.status === "completed";
         const state = done ? "Done" : reached ? (job.status === "failed" ? "Stopped" : "In progress") : "Remaining";
         const step = element("li", done ? "complete" : "");
         if (reached && job.status === "running") step.setAttribute("aria-current", "step");
         const stepState = element("span", "step-state", state);
-        const events = history.filter(event => event.phase === phases[index][0] && Number.isFinite(event.started_at));
+        const events = history.filter(event => event.phase === phase && Number.isFinite(event.started_at));
         if (events.length) {
             const seconds = events.reduce((total, event) => total + (event.end ? event.end - event.started_at : 0), 0);
             stepState.append(document.createTextNode(" · "), taskClock(seconds, events.find(event => !event.end)?.started_at));
@@ -77,7 +79,8 @@ function queueCard(job, historyOpen) {
     title.id = card.id + "-title";
     card.setAttribute("aria-labelledby", title.id);
     name.append(title, element("code", null, "Task #" + job.job_id));
-    const label = job.status === "queued" && job.position ? "Waiting · #" + job.position : statusLabels[job.status];
+    const label = job.status === "queued" && job.position ? "Waiting · #" + job.position
+        : job.status === "completed" && job.kind === "publish" ? "Uploaded" : statusLabels[job.status];
     heading.append(name, element("span", "queue-status", label));
     card.append(heading);
     const times = taskTimes(job);
@@ -128,7 +131,14 @@ function queueCard(job, historyOpen) {
     }
     if (job.status === "completed" || job.status === "failed") {
         const actions = element("div", "queue-view");
-        if (job.status === "completed" || libraryBatchIds.has(job.job_id)) {
+        if (publishResultUrl(job)) {
+            const view = link("View upload", publishResultUrl(job), "arrow");
+            view.dataset.queueControl = "upload";
+            view.target = "_blank";
+            view.rel = "noopener noreferrer";
+            actions.append(view);
+        }
+        if ((job.status === "completed" && job.kind !== "publish") || job.result_batch_id || libraryBatchIds.has(job.job_id)) {
             const view = link("View clips", batchHref(job.result_batch_id || job.job_id), "arrow");
             view.dataset.queueControl = "view";
             view.addEventListener("click", () => {

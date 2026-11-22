@@ -15,6 +15,11 @@ function batchHref(jobId) {
     return "/library#batch-" + encodeURIComponent(jobId);
 }
 
+function publishResultUrl(job) {
+    return /^https:\/\/(?:studio\.youtube\.com|www\.instagram\.com|www\.facebook\.com)\//.test(job?.result_url || "")
+        ? job.result_url : "";
+}
+
 function hideQueueFlash() {
     clearTimeout(flashTimer);
     taskNotice.hidden = true;
@@ -35,16 +40,22 @@ function showQueueFlash(jobs) {
     const failures = jobs.filter((job) => job.status === "failed").length;
     const ready = result?.status === "completed";
     const title = result
-        ? (ready ? "Clips ready" : "Task stopped") + " · #" + result.job_id
+        ? (ready ? (result.kind === "publish" ? "Upload confirmed" : "Clips ready") : "Task stopped") + " · #" + result.job_id
         : jobs.length + " tasks finished";
     const detail = result
         ? (ready ? result.detail : result.source + " stopped during " + result.stage.toLowerCase() + ".")
         : (jobs.length - failures) + " completed · " + failures + " stopped";
 
     const link = byId("queue-flash-link");
-    link.hidden = !ready;
-    if (ready) link.href = batchHref(result.result_batch_id || result.job_id);
-    byId("queue-flash-details").hidden = ready;
+    const uploaded = publishResultUrl(result);
+    link.hidden = !ready || (result.kind === "publish" && !uploaded);
+    if (ready) {
+        link.href = uploaded || batchHref(result.result_batch_id || result.job_id);
+        link.textContent = uploaded ? "View upload" : "View clips";
+        link.target = uploaded ? "_blank" : "_self";
+        link.rel = uploaded ? "noopener noreferrer" : "";
+    }
+    byId("queue-flash-details").hidden = !link.hidden;
     byId("queue-flash-title").textContent = title;
     byId("queue-flash-detail").textContent = detail;
     taskNotice.dataset.state = failures ? "failed" : "complete";

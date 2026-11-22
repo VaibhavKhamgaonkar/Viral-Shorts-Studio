@@ -328,13 +328,14 @@ function clipCard(clip, folder, sourceTitle) {
     const actions = element("div", "clip-actions");
     const kit = action("", (event) => openPostingKit(clip, folder, sourceTitle, event.currentTarget), "copy");
     const edit = action("", () => openClipEditor(clip, clipPath, uri), "edit");
+    const share = action("", () => openPublication(folder, [clip]), "upload");
     const download = link("", uri, "download");
     download.download = clip.filename;
     const reveal = action("", async () => {
         try { await api("/api/reveal_clip/" + clipPath, {method: "POST"}); }
         catch (error) { toast(error.message); }
     }, "folder");
-    for (const [control, label] of [[edit, "Edit clip"], [kit, "AI posting kit"], [download, "Download MP4"], [reveal, "Show in folder"]]) {
+    for (const [control, label] of [[share, "Share clip"], [edit, "Edit clip"], [kit, "AI posting kit"], [download, "Download MP4"], [reveal, "Show in folder"]]) {
         control.dataset.tooltip = label;
         control.setAttribute("aria-label", label + " · " + clip.filename);
         actions.append(control);
@@ -375,6 +376,7 @@ function batchCard(batch) {
     const buttons = element("div", "batch-toolbar");
     const folder = encodeURIComponent(batch.folder_name);
     buttons.append(
+        action("Share clips", () => openPublication(batch.folder_name, batch.clips), "upload"),
         action("Open folder", async () => {
             try { await api("/api/open_folder/" + folder); } catch (error) { toast(error.message); }
         }, "folder"),
@@ -590,7 +592,7 @@ async function addMusic() {
 
 const pages = {
     studio: ["Create clips", "Find the best moments in a long video and export them as vertical clips."],
-    library: ["Clip library", "Review exports, download MP4s, and copy text for your posts."],
+    library: ["Clip library", "Review, edit, and publish exported clips."],
     settings: ["Studio settings", "Customize new exports and save your publishing preferences."],
 };
 const [title, subtitle] = pages[route];

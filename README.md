@@ -98,7 +98,7 @@ The studio uses NVIDIA H.264 encoding when available and falls back to CPU encod
 
 ## Publish your clips
 
-**Publishing destinations** saves YouTube channel, Instagram profile, and Facebook Page details on this machine. **Future default** records which accounts you want preselected when direct uploads are available. Account connection and automatic uploads are unavailable in this version.
+**Publishing destinations** connects YouTube, Instagram, and Facebook. Check **Preselect** for the connected destinations you want selected when you open Share, then save the settings.
 
 ### Upload a YouTube Short manually
 
@@ -110,13 +110,32 @@ Use the same exported MP4 for manual uploads through [Instagram](https://www.ins
 
 ### Direct upload from a local studio
 
-Direct upload requires an account connection for each destination. The installed studio could send the selected MP4s to the platform APIs over the internet while keeping editing and rendering on the PC.
+Open the studio at `http://127.0.0.1:8000`, then go to **Settings → Publishing destinations**. Connect your own accounts once. The studio sends exports directly to the platform APIs over the internet.
 
-- **YouTube Shorts** needs a Google Cloud project with YouTube Data API v3 enabled, a Desktop OAuth client, and upload consent from the channel owner. If the OAuth app is in testing, add the owner's account as a test user. Set visibility explicitly to **Private** for an initial upload you can review in YouTube Studio. [Google desktop authorization](https://developers.google.com/identity/protocols/oauth2/native-app) · [YouTube upload guide](https://developers.google.com/youtube/data/guides/uploading_a_video)
-- **Instagram Reels** needs a professional account and a Meta app with content-publishing access. Meta supports sending a local MP4 directly with the resumable upload flow documented for Facebook Login for Business. The URL-based flow requires a publicly reachable media URL. [Instagram Content Publishing](https://developers.facebook.com/docs/instagram-platform/content-publishing/)
-- **Facebook Reels** needs a Facebook Page, publishing access, and a Page access token. The Reels API accepts a local video file. [Meta Facebook Reels API](https://github.com/fbsamples/Facebook-Reels-Publishing-API-Postman-Collection)
+**Connect YouTube**
 
-A batch upload would let you review the selected clips, destinations, captions, and visibility before submitting. Each clip and destination would have its own status and retry. The current **Publishing destinations** settings store handles and preferences on this PC.
+1. In Google Cloud Console, create or select a project and enable **YouTube Data API v3**.
+2. Configure **Google Auth Platform** for the project. If the app uses an external audience and is in testing, add the Google account that manages the channel to **Test users**.
+3. Under **Clients**, create a **Desktop app** OAuth client and download its JSON file.
+4. In the studio, expand **Connect YouTube**, select that file, and choose **Authorize with Google**. Select the intended channel and grant both requested permissions. Check that the connected channel name is correct when the studio returns to Settings.
+
+Google may expire refresh tokens for apps in testing after seven days. Reauthorize from Settings if prompted. [Google desktop OAuth](https://developers.google.com/identity/protocols/oauth2/native-app) · [Google OAuth token expiration](https://developers.google.com/identity/protocols/oauth2#expiration) · [YouTube upload guide](https://developers.google.com/youtube/data/guides/uploading_a_video)
+
+**Connect Facebook and Instagram**
+
+1. Use a Facebook Page you can publish to. For Instagram, link your professional account to that Page.
+2. Configure a Meta app for **Facebook Login for Business** and authorize the account in Meta's **Graph API Explorer** using that app. For Facebook, grant `pages_show_list`, `pages_read_engagement`, and `pages_manage_posts`. To include Instagram, also grant `instagram_basic` and `instagram_content_publish`. In development, use a Meta account with the appropriate app role. Other users may require Advanced Access or App Review.
+3. Copy the numeric Facebook Page ID and your **User access token** into **Connect a Facebook Page and linked Instagram account**, then choose **Connect Meta accounts**. The studio checks permissions, obtains the Page token, and displays the linked publishing accounts.
+
+If your Meta token expires, generate a new one and reconnect. Facebook Page Reels accept 9:16 clips between 3 and 90 seconds. [Graph API Explorer](https://developers.facebook.com/docs/graph-api/guides/explorer/) · [Instagram publishing](https://developers.facebook.com/documentation/instagram-platform/content-publishing/) · [Facebook Reels publishing](https://developers.facebook.com/documentation/video-api/guides/reels-publishing)
+
+**Upload clips**
+
+1. Use **Share clip** on an export or **Share clips** for a batch. Choose the clips and destinations, then review each title and caption. The form starts with the saved posting kit, including its hashtags.
+2. For YouTube, select visibility and audience. Visibility starts at **Private**. Instagram follows the account's visibility, and Facebook Page Reels publish publicly. Set the AI media disclosure where applicable and confirm you have permission to publish.
+3. Click **Upload selected**. Each clip and destination gets a task. **View upload** opens the platform result when its URL is available. For a stopped task, share the same export again with the same settings to resume supported sessions. Confirmed uploads for the same export and account are skipped.
+
+Credentials and upload records are saved locally under `data/publishing/`, which Git ignores. Keep the OAuth JSON and Meta tokens private. **Disconnect** removes the local connection. Revoke app access on the platform itself to invalidate a grant there.
 
 ### Footage and music rights
 
