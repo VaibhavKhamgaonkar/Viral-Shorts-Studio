@@ -399,6 +399,7 @@ input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: var
 #meta-page-choice { display: grid; gap: 8px; }
 .publish-setup-card > .form-message { margin-top: 7px; overflow-wrap: anywhere; }
 #meta-connection-status { white-space: pre-line; }
+#instagram-connection-detail { margin: 7px 0 0; overflow-wrap: anywhere; }
 @media (max-width: 760px) { .publish-setup-grid { grid-template-columns: minmax(0, 1fr); } }
 .publish-dialog .kit-scroll { display: grid; gap: 10px; }
 #publish-dialog-summary { overflow-wrap: anywhere; }

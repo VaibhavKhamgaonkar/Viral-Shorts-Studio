@@ -226,7 +226,7 @@ def publishing_origin(request: Request):
 @app.get("/api/publishing")
 def get_publishing(_origin: str = Depends(publishing_origin)):
     try:
-        return {"accounts": PUBLISHING.public(),
+        return {"accounts": PUBLISHING.public(), "instagram_setup": PUBLISHING.instagram_setup_status(),
                 "defaults": {key: destination.enabled for key, destination in studio_settings(load_settings()).destinations.items()}}
     except PublishError as error:
         raise HTTPException(503, str(error)) from None

@@ -116,6 +116,9 @@ class PublishStore:
             for platform in PLATFORMS if (account := self.account(platform, saved))
         }
 
+    def instagram_setup_status(self):
+        return self.connections().get("meta", {}).get("instagram_setup")
+
     def start_youtube(self, client, redirect):
         verifier = secrets.token_urlsafe(64)
         challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
@@ -184,6 +187,9 @@ class PublishStore:
             raise PublishError("This token is missing publishing permissions.\n"
                                + details
                                + "\nIn Graph API Explorer, add the permissions for the platform you want and generate a new User Access Token.")
+        if not facebook and self.account("facebook").get("id") == page_id:
+            names = ", ".join(sorted(missing["facebook"]))
+            raise PublishError(f"To add Instagram and keep Facebook connected, include these Facebook permissions in the new token: {names}.")
         page = graph("GET", page_id, user_token, params={"fields": "id,name,access_token"})
         if page.get("id") != page_id or not page.get("access_token"):
             raise PublishError("Use a User token for an account that manages this Facebook Page.")
@@ -191,15 +197,22 @@ class PublishStore:
         saved = {"token": page["access_token"]}
         if facebook:
             saved["facebook"] = {"id": page_id, "name": page.get("name") or "Facebook Page"}
-        if instagram:
-            account = graph("GET", page_id, user_token,
-                            params={"fields": "instagram_business_account{id,username}"}).get("instagram_business_account")
-            if account:
-                saved["instagram"] = {"id": service_id(account.get("id")), "name": "@" + account["username"]}
-            elif not facebook:
-                raise PublishError("Link an Instagram professional account to this Facebook Page first.")
-        if len(saved) == 1:
-            raise PublishError("No publishing destination could be connected.")
+        if not instagram:
+            saved["instagram_setup"] = {"state": "permissions", "missing": sorted(missing["instagram"])}
+        else:
+            try:
+                account = graph("GET", page_id, user_token,
+                                params={"fields": "instagram_business_account{id,username}"}).get("instagram_business_account")
+                if account:
+                    saved["instagram"] = {"id": service_id(account.get("id")), "name": "@" + account["username"]}
+                elif facebook:
+                    saved["instagram_setup"] = {"state": "unlinked"}
+                else:
+                    raise PublishError("Meta did not return a linked professional Instagram account for this Page.")
+            except PublishError:
+                if not facebook:
+                    raise
+                saved["instagram_setup"] = {"state": "lookup_failed"}
         self.save_connection("meta", saved)
 
     def receipt(self, key):

@@ -150,6 +150,12 @@ In **Meta My Apps → your app → Use cases → Manage everything on your Page 
 - **Find my Pages shows an empty list.** Generate a fresh User Access Token and grant access to the Page in the Facebook prompt. The signed-in Facebook account must be able to publish to the Page. For Instagram to appear, link a professional Instagram account to that Page.
 - **Your Page appears, but Connect this Page reports missing permissions.** Meta granted enough access to list the Page. Click the information icon beside **Access Token** in Explorer to check what was actually granted. Add the permissions listed by the studio, generate a new User Access Token, and paste the new token into the studio.
 
+##### Add Instagram after connecting Facebook
+
+1. In your Meta app, open **Use cases → Manage messaging & content on Instagram → Customize**. Select **API setup with Facebook login** in the left sidebar. In **Permissions and features**, add `instagram_basic` and `instagram_content_publish` if they show **+ Add**. [Meta’s Instagram publishing permissions](https://developers.facebook.com/documentation/instagram-platform/content-publishing)
+2. On Facebook, switch into the Page using **See all profiles**. Open **Settings & privacy → Settings → Linked accounts → Instagram → Connect account** and sign in to your professional Instagram account. [Meta’s Page linking guide](https://www.facebook.com/business/help/connect-instagram-to-page)
+3. In Explorer, generate a fresh User Access Token with the three Facebook permissions and both Instagram permissions. In the studio, use **Manage Meta connection → Find my Pages → Connect this Page** for the same Page. The Instagram card shows which permissions are missing or whether Meta returned a linked account.
+
 Keep the token private. [Meta token selection](https://developers.facebook.com/docs/graph-api/webhooks/getting-started/webhooks-for-pages) · [Instagram publishing permissions](https://developers.facebook.com/documentation/instagram-platform/content-publishing/)
 
 #### Upload a clip

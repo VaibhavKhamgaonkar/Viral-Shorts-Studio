@@ -11,7 +11,7 @@ function connectionStatus(service, text, success = false) {
 
 async function loadPublishingSettings() {
     try {
-        const {accounts, defaults} = await api("/api/publishing");
+        const {accounts, defaults, instagram_setup: instagramSetup} = await api("/api/publishing");
         for (const platform of destinations) {
             const name = byId(platform + "-connected");
             name.textContent = accounts[platform]?.name || "Not connected";
@@ -21,6 +21,15 @@ async function loadPublishingSettings() {
         }
         byId("disconnect-youtube").hidden = !accounts.youtube;
         byId("disconnect-meta").hidden = !accounts.instagram && !accounts.facebook;
+        const instagramDetail = byId("instagram-connection-detail");
+        instagramDetail.hidden = !accounts.facebook || Boolean(accounts.instagram);
+        const instagramMessages = {
+            permissions: () => "The last token is missing " + instagramSetup.missing.join(", ") + ". Add the missing permissions and generate a new User Access Token.",
+            unlinked: () => "Meta did not return a professional Instagram account for this Page. Check Linked accounts on your Facebook Page.",
+            lookup_failed: () => "Meta could not verify the linked Instagram account. Check Linked accounts and reconnect with a fresh token.",
+        };
+        instagramDetail.textContent = instagramMessages[instagramSetup?.state]?.()
+            || "Use Manage Meta connection to link Instagram and check the token permissions.";
         byId("youtube-setup-label").textContent = accounts.youtube ? "Change YouTube account" : "Set up YouTube";
         byId("meta-setup-label").textContent = accounts.facebook || accounts.instagram ? "Manage Meta connection" : "Set up Facebook & Instagram";
         const query = new URLSearchParams(location.search);
@@ -126,8 +135,7 @@ connectMetaPage.addEventListener("click", async ({currentTarget: button}) => {
         await loadPublishingSettings();
         byId("meta-setup").open = false;
         const names = [accounts.facebook?.name, accounts.instagram?.name].filter(Boolean);
-        const instagramHelp = accounts.instagram ? "" : " To add Instagram, link your professional account to the Page and grant the Instagram permissions above.";
-        connectionStatus("meta", "Connected to " + names.join(" and ") + "." + instagramHelp, true);
+        connectionStatus("meta", "Connected to " + names.join(" and ") + ".", true);
     } catch (error) {
         connectionStatus("meta", publishingSetupError(error));
     } finally {

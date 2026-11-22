@@ -95,6 +95,38 @@ class SocialUploadTests(unittest.TestCase):
         self.assertNotIn("pages_show_list", detail)
         graph.assert_called_once_with("GET", "me/permissions", "private-user-token")
 
+    def test_meta_connection_distinguishes_instagram_scope_and_link_problems(self):
+        facebook_grants = ["pages_show_list", "pages_read_engagement", "pages_manage_posts"]
+        for lookup, expected in [
+            (None, {"state": "permissions", "missing": ["instagram_basic", "instagram_content_publish"]}),
+            ({}, {"state": "unlinked"}),
+            (PublishError("Meta rejected the lookup"), {"state": "lookup_failed"}),
+        ]:
+            with self.subTest(expected=expected), TemporaryDirectory() as tmp:
+                store = PublishStore(tmp)
+                grants = facebook_grants if lookup is None else facebook_grants + ["instagram_basic", "instagram_content_publish"]
+                replies = [
+                    {"data": [{"permission": name, "status": "granted"} for name in grants]},
+                    {"id": "123", "name": "SnapOdd", "access_token": "page-token"},
+                ]
+                if lookup is not None:
+                    replies.append(lookup)
+                with patch("core.social_upload.graph", side_effect=replies):
+                    store.connect_meta("123", "user-token")
+                self.assertEqual(store.public(), {"facebook": {"id": "123", "name": "SnapOdd"}})
+                self.assertEqual(store.instagram_setup_status(), expected)
+
+    def test_adding_instagram_keeps_existing_facebook_when_new_token_lacks_page_post_access(self):
+        with TemporaryDirectory() as tmp:
+            store = PublishStore(tmp)
+            original = {"token": "working-page-token", "facebook": {"id": "123", "name": "SnapOdd"}}
+            store.save_connection("meta", original)
+            grants = ["pages_show_list", "pages_read_engagement", "instagram_basic", "instagram_content_publish"]
+            response = {"data": [{"permission": name, "status": "granted"} for name in grants]}
+            with patch("core.social_upload.graph", return_value=response), self.assertRaisesRegex(PublishError, "pages_manage_posts"):
+                store.connect_meta("123", "user-token")
+            self.assertEqual(store.connections()["meta"], original)
+
     def test_youtube_resume_checks_the_same_session_and_remaining_bytes(self):
         url = "https://www.googleapis.com/upload/session"
         with patch("core.social_upload.http", side_effect=[
