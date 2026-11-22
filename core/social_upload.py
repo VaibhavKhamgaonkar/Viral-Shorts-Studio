@@ -15,6 +15,11 @@ from core.publisher import write_clip_metadata
 
 
 PLATFORMS = {"youtube": "YouTube", "instagram": "Instagram", "facebook": "Facebook"}
+META_PAGE_PERMISSIONS = {"pages_show_list", "pages_read_engagement"}
+META_REEL_PERMISSIONS = {
+    "facebook": META_PAGE_PERMISSIONS | {"pages_manage_posts"},
+    "instagram": META_PAGE_PERMISSIONS | {"instagram_basic", "instagram_content_publish"},
+}
 YOUTUBE = "https://www.googleapis.com"
 GOOGLE_TOKEN = "https://oauth2.googleapis.com/token"
 META_VERSION = "v27.0"
@@ -169,10 +174,16 @@ class PublishStore:
     def connect_meta(self, page_id, user_token):
         permissions = graph("GET", "me/permissions", user_token).get("data", [])
         granted = {item.get("permission") for item in permissions if item.get("status") == "granted"}
-        facebook = {"pages_show_list", "pages_read_engagement", "pages_manage_posts"}.issubset(granted)
-        instagram = {"pages_show_list", "pages_read_engagement", "instagram_basic", "instagram_content_publish"}.issubset(granted)
+        missing = {platform: required - granted for platform, required in META_REEL_PERMISSIONS.items()}
+        facebook = not missing["facebook"]
+        instagram = not missing["instagram"]
         if not (facebook or instagram):
-            raise PublishError("Grant Facebook or Instagram publishing permissions in your Meta app.")
+            details = "\n".join(
+                f"{PLATFORMS[platform]} needs {', '.join(sorted(names))}." for platform, names in missing.items()
+            )
+            raise PublishError("This token is missing publishing permissions.\n"
+                               + details
+                               + "\nIn Graph API Explorer, add the permissions for the platform you want and generate a new User Access Token.")
         page = graph("GET", page_id, user_token, params={"fields": "id,name,access_token"})
         if page.get("id") != page_id or not page.get("access_token"):
             raise PublishError("Use a User token for an account that manages this Facebook Page.")

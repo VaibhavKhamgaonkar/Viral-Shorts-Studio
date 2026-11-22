@@ -78,6 +78,23 @@ class SocialUploadTests(unittest.TestCase):
                 "instagram": {"id": "456", "name": "@snapodd"},
             })
 
+    def test_meta_connection_reports_missing_and_declined_grants_for_each_platform(self):
+        store = PublishStore("unused")
+        with patch("core.social_upload.graph", return_value={"data": [
+            {"permission": "pages_show_list", "status": "granted"},
+            {"permission": "business_management", "status": "granted"},
+            {"permission": "pages_manage_posts", "status": "declined"},
+            {"permission": "instagram_basic", "status": "granted"},
+        ]}) as graph:
+            with self.assertRaises(PublishError) as error:
+                store.connect_meta("123", "private-user-token")
+        detail = str(error.exception)
+        self.assertIn("Facebook needs pages_manage_posts, pages_read_engagement.", detail)
+        self.assertIn("Instagram needs instagram_content_publish, pages_read_engagement.", detail)
+        self.assertNotIn("private-user-token", detail)
+        self.assertNotIn("pages_show_list", detail)
+        graph.assert_called_once_with("GET", "me/permissions", "private-user-token")
+
     def test_youtube_resume_checks_the_same_session_and_remaining_bytes(self):
         url = "https://www.googleapis.com/upload/session"
         with patch("core.social_upload.http", side_effect=[
