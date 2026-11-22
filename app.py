@@ -30,7 +30,7 @@ from pydantic import BaseModel, Field, model_validator
 from starlette.background import BackgroundTask
 
 from config.settings import load_settings, save_settings
-from config.studio import Layout, Platform, StudioSettings, studio_settings
+from config.studio import Destination, Layout, Platform, StudioSettings, studio_settings
 from core.analyzer import generate_post_copy
 from core.audio_breakdown import read_audio, write_audio
 from core.clip_editor import (
@@ -145,9 +145,12 @@ class YouTubeClient(BaseModel):
     client_secret: str
 
 
-class MetaConnection(BaseModel):
-    page_id: str = Field(max_length=32, pattern=r"^[0-9]+$")
+class MetaToken(BaseModel):
     user_token: str
+
+
+class MetaConnection(MetaToken):
+    page_id: str = Field(max_length=32, pattern=r"^[0-9]+$")
 
 
 class PublishClip(BaseModel):
@@ -248,10 +251,23 @@ def youtube_callback(state: str = "", code: str = "", origin: str = Depends(publ
     return RedirectResponse(target, status_code=303, headers={"Referrer-Policy": "no-referrer", "Cache-Control": "no-store"})
 
 
+def validate_meta_token(token):
+    if not re.fullmatch(r"[A-Za-z0-9_.|+-]{10,4096}", token):
+        raise HTTPException(422, "Paste the User Token from Meta Graph API Explorer.")
+
+
+@app.post("/api/publishing/meta/pages")
+def list_meta_pages(credentials: MetaToken, _origin: str = Depends(publishing_origin)):
+    validate_meta_token(credentials.user_token)
+    try:
+        return {"pages": PUBLISHING.meta_pages(credentials.user_token)}
+    except PublishError as error:
+        raise HTTPException(422, str(error)) from None
+
+
 @app.post("/api/publishing/meta/connect")
 def connect_meta(connection: MetaConnection, _origin: str = Depends(publishing_origin)):
-    if not re.fullmatch(r"[A-Za-z0-9_.|+-]{10,4096}", connection.user_token):
-        raise HTTPException(422, "Enter a valid Meta User access token.")
+    validate_meta_token(connection.user_token)
     try:
         PUBLISHING.connect_meta(connection.page_id, connection.user_token)
         return {"accounts": PUBLISHING.public()}
@@ -266,6 +282,18 @@ def disconnect_publishing(service: Literal["youtube", "meta"], _origin: str = De
     except PublishError as error:
         raise HTTPException(503, str(error)) from None
     return {"accounts": PUBLISHING.public()}
+
+
+@app.put("/api/publishing/defaults/{platform}")
+def set_publishing_default(platform: Platform, enabled: bool, _origin: str = Depends(publishing_origin)):
+    with SETTINGS_LOCK:
+        settings = load_settings()
+        destinations = studio_settings(settings).destinations
+        entry = destinations.get(platform, Destination())
+        entry.enabled = enabled
+        destinations[platform] = entry
+        save_settings(settings | {"destinations": {key: value.model_dump() for key, value in destinations.items()}})
+    return {"enabled": enabled}
 
 
 @app.post("/api/publishing/batch/{folder_name}")
@@ -338,9 +366,12 @@ def update_settings(preferences: StudioSettings):
     if preferences.music_mode == "replace" and preferences.music_track not in list_music():
         raise HTTPException(422, "Select an available replacement track.")
     with SETTINGS_LOCK:
-        settings = load_settings() | preferences.model_dump()
+        fields = preferences.model_dump()
+        if "destinations" not in preferences.model_fields_set:
+            fields.pop("destinations")
+        settings = load_settings() | fields
         save_settings(settings)
-    return preferences
+    return studio_settings(settings)
 
 
 @app.get("/api/music")
@@ -1374,6 +1405,7 @@ def launch_studio(open_browser=False):
             "/api/edit/{folder_name}/{filename}/audio-tracks",
             "/api/posting-kit/{folder_name}/{filename}/hashtags",
             "/api/publishing",
+            "/api/publishing/meta/pages",
         }
         if not response.ok or not required_routes.issubset(paths):
             print(f"Port {port} is in use by an older studio or another app. Close it before launching this version.")

@@ -20,6 +20,30 @@ def response(status=200, body=None, headers=None):
 
 
 class SocialUploadTests(unittest.TestCase):
+    def test_meta_page_picker_only_exposes_publishable_pages_and_follows_cursor(self):
+        store = PublishStore("unused")
+        with patch("core.social_upload.graph", side_effect=[
+            {"data": [{"id": "123", "name": "Read Only", "tasks": ["ANALYZE"]}],
+             "paging": {"next": "https://graph.facebook.com", "cursors": {"after": "after-first"}}},
+            {"data": [{"id": "456", "name": "SnapOdd", "tasks": ["PROFILE_PLUS_CREATE_CONTENT"],
+                       "access_token": "must-not-be-returned"}]},
+        ]) as graph:
+            self.assertEqual(store.meta_pages("token"), [{"id": "456", "name": "SnapOdd"}])
+            self.assertEqual(graph.call_args.args, ("GET", "me/accounts", "token"))
+            self.assertEqual(graph.call_args.kwargs["params"]["after"], "after-first")
+
+    def test_default_selection_survives_saving_unrelated_settings(self):
+        settings = {"destinations": {"youtube": {"account": "@SnapOdd", "enabled": False}}}
+        client = TestClient(app.app, base_url="http://127.0.0.1:8000")
+        self.addCleanup(client.close)
+        with patch.object(app, "load_settings", return_value=settings), patch.object(app, "save_settings") as save:
+            response = client.put("/api/publishing/defaults/youtube", params={"enabled": "true"})
+            self.assertEqual(response.status_code, 200, response.text)
+            settings.update(save.call_args.args[0])
+            response = client.put("/api/settings", json={"brand_name": "SnapOdd"})
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(save.call_args.args[0]["destinations"]["youtube"], {"account": "@SnapOdd", "enabled": True})
+
     def test_google_pkce_and_state_identify_the_authorized_channel(self):
         with TemporaryDirectory() as tmp:
             store = PublishStore(tmp)

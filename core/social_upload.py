@@ -147,11 +147,30 @@ class PublishStore:
             "client": client, "refresh_token": token["refresh_token"],
         })
 
+    def meta_pages(self, user_token):
+        fields = {"fields": "id,name,tasks", "limit": 100}
+        publish_tasks = {"CREATE_CONTENT", "MANAGE", "PROFILE_PLUS_CREATE_CONTENT", "PROFILE_PLUS_FULL_CONTROL", "PROFILE_PLUS_MANAGE"}
+        pages = {}
+        while True:
+            result = graph("GET", "me/accounts", user_token, params=fields)
+            for page in result.get("data", []):
+                page_id = page.get("id", "")
+                if re.fullmatch(r"[0-9]+", page_id) and publish_tasks.intersection(page.get("tasks") or []):
+                    pages[page_id] = {"id": page_id, "name": page.get("name") or "Facebook Page"}
+            paging = result.get("paging", {})
+            cursor = paging.get("cursors", {}).get("after")
+            if not paging.get("next") or not cursor or cursor == fields.get("after"):
+                break
+            fields["after"] = cursor
+        if not pages:
+            raise PublishError("Meta did not return any Pages you can publish to. Generate a User Token with pages_show_list and grant access to your Page.")
+        return sorted(pages.values(), key=lambda page: page["name"].casefold())
+
     def connect_meta(self, page_id, user_token):
         permissions = graph("GET", "me/permissions", user_token).get("data", [])
         granted = {item.get("permission") for item in permissions if item.get("status") == "granted"}
         facebook = {"pages_show_list", "pages_read_engagement", "pages_manage_posts"}.issubset(granted)
-        instagram = {"pages_read_engagement", "instagram_basic", "instagram_content_publish"}.issubset(granted)
+        instagram = {"pages_show_list", "pages_read_engagement", "instagram_basic", "instagram_content_publish"}.issubset(granted)
         if not (facebook or instagram):
             raise PublishError("Grant Facebook or Instagram publishing permissions in your Meta app.")
         page = graph("GET", page_id, user_token, params={"fields": "id,name,access_token"})

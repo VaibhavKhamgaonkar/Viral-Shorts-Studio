@@ -5,33 +5,57 @@ const publishDialog = byId("publish-dialog");
 const publishForm = byId("publish-form");
 let publication;
 
-function connectionStatus(text, success = false) {
-    message("publish-connection-status", text, success);
+function connectionStatus(service, text, success = false) {
+    message(service + "-connection-status", text, success);
 }
 
 async function loadPublishingSettings() {
     try {
-        const {accounts} = await api("/api/publishing");
+        const {accounts, defaults} = await api("/api/publishing");
         for (const platform of destinations) {
-            byId(platform + "-connected").textContent = accounts[platform]?.name || "Connect an account";
-            byId(platform + "-enabled").disabled = !accounts[platform];
+            const name = byId(platform + "-connected");
+            name.textContent = accounts[platform]?.name || "Not connected";
+            name.dataset.state = accounts[platform] ? "connected" : "disconnected";
+            byId(platform + "-default").hidden = !accounts[platform];
+            byId(platform + "-enabled").checked = Boolean(defaults[platform]);
         }
         byId("disconnect-youtube").hidden = !accounts.youtube;
         byId("disconnect-meta").hidden = !accounts.instagram && !accounts.facebook;
+        byId("youtube-setup-label").textContent = accounts.youtube ? "Change YouTube account" : "Set up YouTube";
+        byId("meta-setup-label").textContent = accounts.facebook || accounts.instagram ? "Manage Meta connection" : "Set up Facebook & Instagram";
         const query = new URLSearchParams(location.search);
-        if (query.has("publishing_connected")) connectionStatus("YouTube connected.", true);
-        if (query.has("publishing_error")) connectionStatus(query.get("publishing_error"));
+        if (query.has("publishing_connected")) connectionStatus("youtube", "Connected to " + accounts.youtube?.name + ".", true);
+        if (query.has("publishing_error")) {
+            byId("youtube-setup").open = true;
+            connectionStatus("youtube", query.get("publishing_error"));
+        }
         if (query.has("publishing_connected") || query.has("publishing_error")) {
             history.replaceState(null, "", "/settings#publishing");
         }
     } catch (error) {
-        connectionStatus(error.message);
+        for (const platform of destinations) byId(platform + "-connected").textContent = "Connection unavailable";
+        connectionStatus("youtube", publishingSetupError(error));
     }
 }
 
-if (route === "settings") loadPublishingSettings();
+function publishingSetupError(error) {
+    return error.message === "Not Found"
+        ? "Restart the local studio with start_web.bat, then reload Settings." : error.message;
+}
 
-byId("connect-youtube").addEventListener("click", async ({currentTarget: button}) => {
+if (route === "settings") {
+    loadPublishingSettings();
+    const openSetupLink = () => {
+        if (location.hash === "#youtube-setup") byId("youtube-setup").open = true;
+        if (location.hash === "#meta-setup") byId("meta-setup").open = true;
+    };
+    openSetupLink();
+    window.addEventListener("hashchange", openSetupLink);
+}
+
+byId("youtube-connect-form").addEventListener("submit", async event => {
+    event.preventDefault();
+    const button = byId("connect-youtube");
     button.disabled = true;
     try {
         const file = byId("youtube-client-file").files[0];
@@ -43,27 +67,74 @@ byId("connect-youtube").addEventListener("click", async ({currentTarget: button}
         }));
         location.assign(result.authorization_url);
     } catch (error) {
-        connectionStatus(error instanceof SyntaxError ? "The Google OAuth client file is invalid." : error.message);
+        connectionStatus("youtube", error instanceof SyntaxError ? "Choose the JSON file downloaded from Google." : publishingSetupError(error));
         button.disabled = false;
     }
 });
 
-byId("connect-meta").addEventListener("click", async ({currentTarget: button}) => {
-    const token = byId("meta-user-token");
+const metaToken = byId("meta-user-token");
+const metaPage = byId("meta-page-id");
+const findMetaPages = byId("load-meta-pages");
+const connectMetaPage = byId("connect-meta");
+
+function clearMetaPages() {
+    metaPage.replaceChildren();
+    metaPage.disabled = true;
+    connectMetaPage.disabled = true;
+    byId("meta-page-choice").hidden = true;
+}
+
+metaToken.addEventListener("input", clearMetaPages);
+metaPage.addEventListener("change", () => { connectMetaPage.disabled = !metaPage.value; });
+
+byId("meta-connect-form").addEventListener("submit", async event => {
+    event.preventDefault();
+    if (findMetaPages.disabled) return;
+    const token = metaToken.value.trim();
+    clearMetaPages();
+    findMetaPages.disabled = true;
+    connectionStatus("meta", "Finding your Facebook Pages…");
+    try {
+        const {pages} = await api("/api/publishing/meta/pages", jsonRequest("POST", {user_token: token}));
+        if (metaToken.value.trim() !== token) return;
+        metaPage.replaceChildren(new Option("Choose a Page", ""), ...pages.map(page => new Option(page.name, page.id)));
+        if (pages.length === 1) metaPage.value = pages[0].id;
+        metaPage.disabled = false;
+        connectMetaPage.disabled = !metaPage.value;
+        byId("meta-page-choice").hidden = false;
+        connectionStatus("meta", "Choose a Page and click Connect this Page.");
+        metaPage.focus();
+    } catch (error) {
+        connectionStatus("meta", publishingSetupError(error));
+    } finally {
+        findMetaPages.disabled = false;
+    }
+});
+
+connectMetaPage.addEventListener("click", async ({currentTarget: button}) => {
     button.disabled = true;
-    connectionStatus("Checking your Meta Page and permissions…");
+    findMetaPages.disabled = true;
+    metaToken.disabled = true;
+    metaPage.disabled = true;
+    connectionStatus("meta", "Checking the Page and publishing permissions…");
     try {
         const {accounts} = await api("/api/publishing/meta/connect", jsonRequest("POST", {
-            page_id: byId("meta-page-id").value.trim(), user_token: token.value.trim(),
+            page_id: metaPage.value, user_token: metaToken.value.trim(),
         }));
+        metaToken.value = "";
+        clearMetaPages();
         await loadPublishingSettings();
-        connectionStatus(destinations.filter(platform => platform !== "youtube" && accounts[platform])
-            .map(platform => platformNames[platform]).join(" and ") + " connected.", true);
+        byId("meta-setup").open = false;
+        const names = [accounts.facebook?.name, accounts.instagram?.name].filter(Boolean);
+        const instagramHelp = accounts.instagram ? "" : " To add Instagram, link your professional account to the Page and grant the Instagram permissions above.";
+        connectionStatus("meta", "Connected to " + names.join(" and ") + "." + instagramHelp, true);
     } catch (error) {
-        connectionStatus(error.message);
+        connectionStatus("meta", publishingSetupError(error));
     } finally {
-        token.value = "";
-        button.disabled = false;
+        metaToken.disabled = false;
+        findMetaPages.disabled = false;
+        metaPage.disabled = !metaPage.options.length;
+        button.disabled = !metaPage.value;
     }
 });
 
@@ -73,11 +144,28 @@ for (const platform of ["youtube", "meta"]) {
         try {
             await api("/api/publishing/" + platform, {method: "DELETE"});
             await loadPublishingSettings();
-            connectionStatus("Disconnected from this studio.", true);
+            connectionStatus(platform, "Disconnected from this studio.", true);
         } catch (error) {
-            connectionStatus(error.message);
+            connectionStatus(platform, publishingSetupError(error));
         } finally {
             button.disabled = false;
+        }
+    });
+}
+
+for (const platform of destinations) {
+    byId(platform + "-enabled").addEventListener("change", async ({currentTarget: input}) => {
+        const service = platform === "youtube" ? "youtube" : "meta";
+        const enabled = input.checked;
+        input.disabled = true;
+        try {
+            await api("/api/publishing/defaults/" + platform + "?enabled=" + enabled, {method: "PUT"});
+            connectionStatus(service, platformNames[platform] + (enabled ? " will be selected when you open Share." : " will start unselected when you open Share."), true);
+        } catch (error) {
+            input.checked = !enabled;
+            connectionStatus(service, publishingSetupError(error));
+        } finally {
+            input.disabled = false;
         }
     });
 }
@@ -150,11 +238,10 @@ async function openPublication(folder, clips) {
         const {accounts, defaults} = await api("/api/publishing");
         if (publication !== state || !publishDialog.open) return;
         const available = destinations.filter(platform => accounts[platform]);
-        const hasDefault = available.some(platform => defaults[platform]);
         state.targets = destinations.map(platform => {
             const account = accounts[platform];
             const {input, choice} = publishChoice(platformNames[platform] + " · " + (account?.name || "Connect in Settings"),
-                platform, Boolean(account && (hasDefault ? defaults[platform] : available.length === 1)));
+                platform, Boolean(account && (defaults[platform] ?? available.length === 1)));
             input.disabled = !account;
             return {input, choice, account};
         });
@@ -167,6 +254,7 @@ async function openPublication(folder, clips) {
         byId("publish-clips").replaceChildren(...state.clips.map(({row}) => row));
         byId("publish-targets").replaceChildren(...state.targets.map(({choice}) => choice));
         byId("publish-dialog-loading").hidden = true;
+        byId("publish-dialog-settings").hidden = available.length === destinations.length;
         publishForm.hidden = false;
         updatePublication();
     } catch (error) {

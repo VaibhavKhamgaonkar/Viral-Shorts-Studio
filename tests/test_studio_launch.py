@@ -15,6 +15,7 @@ class StudioLaunchTests(unittest.TestCase):
                 "/api/edit/{folder_name}/{filename}/audio-tracks": {"post": {}},
                 "/api/posting-kit/{folder_name}/{filename}/hashtags": {"post": {}},
                 "/api/publishing": {"get": {}},
+                "/api/publishing/meta/pages": {"post": {}},
             },
         }
 

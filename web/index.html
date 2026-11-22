@@ -219,6 +219,66 @@
             </section>
         </div>
 
+        <section id="publishing" class="panel settings-panel" aria-labelledby="publish-title" hidden>
+            <div class="publish-heading">
+                <div><h2 id="publish-title">Publishing destinations</h2><p class="section-copy">Connect the accounts you want to see when you click Share on a clip.</p></div>
+                <a class="button button-outline" href="/library">Go to clip library</a>
+            </div>
+            <div class="publish-setup-grid">
+                <article class="publish-setup-card">
+                    <h3>YouTube</h3>
+                    <p id="youtube-connected" class="publish-account" data-state="loading">Checking connection…</p>
+                    <label class="check publish-default" id="youtube-default" hidden><input type="checkbox" id="youtube-enabled" aria-label="Select YouTube by default"> Select by default</label>
+                    <details class="publish-connection" id="youtube-setup">
+                        <summary><span id="youtube-setup-label">Set up YouTube</span></summary>
+                        <ol class="publish-steps">
+                            <li><h4>Create the sign-in file</h4><p>Sign in with the Google account that manages your channel. Choose <strong>Desktop app</strong>, continue, then click <strong>Download JSON</strong> before closing the confirmation.</p>
+                                <a href="https://console.cloud.google.com/auth/overview/personal" target="_blank" rel="noopener noreferrer">Open Google’s personal setup</a>
+                                <details class="publish-alternative"><summary>Using an existing Google Cloud project?</summary><p>For an External project, use <a href="https://console.cloud.google.com/auth/clients" target="_blank" rel="noopener noreferrer">Google Auth Platform → Clients</a> to create a Desktop app client. For a project in Testing, add your Google account under <a href="https://console.cloud.google.com/auth/audience" target="_blank" rel="noopener noreferrer">Audience → Test users</a>.</p></details>
+                            </li>
+                            <li><h4>Enable YouTube uploads</h4><p>Select the <strong>same project</strong> at the top of Google Cloud, then click <strong>Enable</strong> on the YouTube Data API v3 page.</p><a href="https://console.cloud.google.com/apis/library/youtube.googleapis.com" target="_blank" rel="noopener noreferrer">Open YouTube Data API v3</a></li>
+                            <li><h4>Connect your channel</h4><p>Select the downloaded JSON file below. Then sign in with Google and approve both requested permissions.</p>
+                                <form id="youtube-connect-form" class="publish-connect-form">
+                                    <div class="field"><label for="youtube-client-file">Sign-in file from Google</label><input type="file" id="youtube-client-file" accept=".json,application/json" required></div>
+                                    <button id="connect-youtube" class="button button-primary" type="submit">Continue with Google</button>
+                                </form>
+                            </li>
+                        </ol>
+                    </details>
+                    <button id="disconnect-youtube" class="button button-plain" type="button" hidden>Disconnect YouTube</button>
+                    <p id="youtube-connection-status" class="form-message" role="status" hidden></p>
+                </article>
+                <article class="publish-setup-card">
+                    <h3>Facebook &amp; Instagram</h3>
+                    <div class="publish-account-list">
+                        <div><strong>Facebook</strong><p id="facebook-connected" class="publish-account" data-state="loading">Checking connection…</p><label class="check publish-default" id="facebook-default" hidden><input type="checkbox" id="facebook-enabled" aria-label="Select Facebook by default"> Select by default</label></div>
+                        <div><strong>Instagram</strong><p id="instagram-connected" class="publish-account" data-state="loading">Checking connection…</p><label class="check publish-default" id="instagram-default" hidden><input type="checkbox" id="instagram-enabled" aria-label="Select Instagram by default"> Select by default</label></div>
+                    </div>
+                    <details class="publish-connection" id="meta-setup">
+                        <summary><span id="meta-setup-label">Set up Facebook &amp; Instagram</span></summary>
+                        <ol class="publish-steps">
+                            <li><h4>Prepare your Page</h4><p>Use a Facebook Page you can publish to. To share Reels to Instagram too, switch Instagram to a professional account and link it to that Page.</p><a href="https://www.facebook.com/help/1148909221857370" target="_blank" rel="noopener noreferrer">Connect Instagram to your Facebook Page</a></li>
+                            <li><h4>Get a User Token from Meta</h4><p>In <a href="https://developers.facebook.com/apps/" target="_blank" rel="noopener noreferrer">Meta My Apps</a>, choose <strong>Create App</strong>. Look under <strong>Content management</strong> for <strong>Manage everything on your Page</strong>. If you also set up Instagram, use <strong>Instagram API with Facebook Login</strong>.</p><p>In Graph API Explorer, select your app, then <strong>User or Page → Get User Access Token</strong>. Add the permissions below, generate the token, and approve access to your Page.</p>
+                                <ul class="publish-permissions"><li>Page access <code>pages_show_list</code> <code>pages_read_engagement</code></li><li>Facebook publishing <code>pages_manage_posts</code></li><li>Instagram publishing <code>instagram_basic</code> <code>instagram_content_publish</code></li></ul>
+                                <a href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noopener noreferrer">Open Graph API Explorer</a>
+                            </li>
+                            <li><h4>Pick your Page</h4><p>Paste the token from Graph API Explorer, then choose your Page by name.</p>
+                                <form id="meta-connect-form" class="publish-connect-form">
+                                    <div class="field"><label for="meta-user-token">User Token from Meta</label><input id="meta-user-token" type="password" autocomplete="off" maxlength="4096" required></div>
+                                    <button id="load-meta-pages" class="button button-primary" type="submit">Find my Pages</button>
+                                    <div id="meta-page-choice" hidden>
+                                        <div class="field"><label for="meta-page-id">Facebook Page</label><select id="meta-page-id" disabled></select></div>
+                                        <button id="connect-meta" class="button button-primary" type="button" disabled>Connect this Page</button>
+                                    </div>
+                                </form>
+                            </li>
+                        </ol>
+                    </details>
+                    <button id="disconnect-meta" class="button button-plain" type="button" hidden>Disconnect Meta accounts</button>
+                    <p id="meta-connection-status" class="form-message" role="status" hidden></p>
+                </article>
+            </div>
+        </section>
         <form id="settings-form" class="settings-grid" hidden>
             <section class="panel settings-panel" aria-labelledby="branding-title">
                 <h2 id="branding-title">Brand &amp; captions</h2>
@@ -254,27 +314,6 @@
                     <div class="upload-row"><input type="file" id="music-file" accept=".mp3,.wav,.m4a,.aac,.flac,.ogg"><button class="button button-outline" id="add-music" type="button">Add track</button></div>
                     <small id="music-library-count" aria-live="polite"></small>
                 </div>
-            </section>
-
-            <section id="publishing" class="panel panel-plum settings-panel" aria-labelledby="publish-title">
-                <h2 id="publish-title">Publishing destinations</h2>
-                <p class="section-copy" id="publish-default-help">Connect your accounts to publish directly from the clip library. Save your settings to preselect destinations for future uploads.</p>
-                <div class="destination"><div><strong>YouTube</strong><p id="youtube-connected" class="section-copy">Checking connection…</p><input id="youtube-account" type="hidden"></div><label class="check"><input type="checkbox" id="youtube-enabled" aria-label="Preselect YouTube"> Preselect</label></div>
-                <details class="publish-connection">
-                    <summary>Connect YouTube</summary>
-                    <div class="field"><label for="youtube-client-file">Google desktop OAuth client JSON</label><input type="file" id="youtube-client-file" accept=".json,application/json"></div>
-                    <div class="publish-controls"><button id="connect-youtube" class="button button-outline" type="button">Authorize with Google</button><button id="disconnect-youtube" class="button button-plain" type="button" hidden>Disconnect</button></div>
-                </details>
-                <div class="destination"><div><strong>Instagram</strong><p id="instagram-connected" class="section-copy">Checking connection…</p><input id="instagram-account" type="hidden"></div><label class="check"><input type="checkbox" id="instagram-enabled" aria-label="Preselect Instagram"> Preselect</label></div>
-                <div class="destination"><div><strong>Facebook</strong><p id="facebook-connected" class="section-copy">Checking connection…</p><input id="facebook-account" type="hidden"></div><label class="check"><input type="checkbox" id="facebook-enabled" aria-label="Preselect Facebook"> Preselect</label></div>
-                <details class="publish-connection">
-                    <summary>Connect a Facebook Page and linked Instagram account</summary>
-                    <div class="field"><label for="meta-page-id">Facebook Page ID</label><input id="meta-page-id" inputmode="numeric" maxlength="32"></div>
-                    <div class="field"><label for="meta-user-token">Meta User access token</label><input id="meta-user-token" type="password" autocomplete="off" maxlength="4096"></div>
-                    <div class="publish-controls"><button id="connect-meta" class="button button-outline" type="button">Connect Meta accounts</button><button id="disconnect-meta" class="button button-plain" type="button" hidden>Disconnect</button></div>
-                </details>
-                <p id="publish-connection-status" class="form-message" role="status" hidden></p>
-                <p class="publishing-help"><a href="https://github.com/VaibhavKhamgaonkar/Viral-Shorts-Studio#direct-upload-from-a-local-studio" target="_blank" rel="noopener noreferrer">Account setup guide</a> · <a href="/library">Clip library</a></p>
             </section>
 
             <div class="settings-actions"><button id="save-settings" class="button button-primary" type="submit">Save settings <svg class="icon"><use href="#i-arrow"/></svg></button><p id="settings-message" class="form-message" role="status" hidden></p></div>

@@ -370,13 +370,35 @@ input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: var
 .settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
 .settings-panel h2 { margin: 0 0 6px; }
 .section-copy { color: var(--muted); font-size: .87rem; margin-bottom: 15px; max-width: 58ch; }
-.destination { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 12px; margin-bottom: 12px; }
-.destination .field { margin: 0; }
-.destination .check { min-height: 42px; }
-.publishing-help { border-top: 1px solid var(--line); padding-top: 12px; color: var(--muted); font-size: .87rem; }
-.publish-connection { border-top: 1px solid var(--line); margin-bottom: 14px; padding-top: 9px; }
-.publish-connection summary { font-size: .86rem; font-weight: 650; margin-bottom: 8px; cursor: pointer; }
-.publish-controls { display: flex; flex-wrap: wrap; gap: 8px; }
+#publishing { margin-bottom: 18px; scroll-margin-top: 80px; }
+.publish-heading { display: flex; flex-wrap: wrap; align-items: start; justify-content: space-between; gap: 8px 16px; margin-bottom: 14px; }
+.publish-heading .section-copy { margin: 0; }
+.publish-setup-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.publish-setup-card { min-width: 0; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--field-surface); }
+.publish-setup-card h3 { margin-bottom: 6px; font-size: 1rem; }
+.publish-account-list { display: flex; flex-wrap: wrap; gap: 8px 24px; }
+.publish-account-list strong { display: block; font-size: .83rem; }
+.publish-account { display: inline-block; max-width: 100%; overflow-wrap: anywhere; padding: 2px 7px; border-radius: 5px; color: var(--muted); background: var(--canvas); font-size: .8rem; }
+.publish-account[data-state="connected"] { color: var(--success); background: #eef4db; }
+.publish-default { margin-top: 3px; }
+.publish-connection { margin-top: 11px; border-top: 1px solid var(--line); }
+.publish-connection > summary { padding-block: 11px; cursor: pointer; font-size: .88rem; font-weight: 700; }
+.publish-alternative { margin-top: 6px; color: var(--muted); }
+.publish-alternative summary { cursor: pointer; }
+.publish-steps { display: grid; gap: 12px; margin: 0; padding-inline-start: 24px; font-size: .86rem; }
+.publish-steps > li { padding-inline-start: 4px; }
+.publish-steps > li::marker { font-weight: 750; color: var(--success); }
+.publish-steps h4 { margin: 0 0 3px; font-size: .9rem; }
+.publish-steps p, .publish-steps .section-copy { margin: 4px 0 5px; }
+.publish-steps a { color: var(--ink); text-underline-offset: 3px; }
+.publish-permissions { padding-inline-start: 16px; margin: 6px 0; }
+.publish-permissions code { overflow-wrap: anywhere; }
+.publish-connect-form { display: grid; gap: 8px; margin: 9px 0 4px; }
+.publish-connect-form .field { margin: 0; }
+.publish-connect-form .button { justify-self: start; }
+#meta-page-choice { display: grid; gap: 8px; }
+.publish-setup-card > .form-message { margin-top: 7px; overflow-wrap: anywhere; }
+@media (max-width: 760px) { .publish-setup-grid { grid-template-columns: minmax(0, 1fr); } }
 .publish-dialog .kit-scroll { display: grid; gap: 10px; }
 #publish-dialog-summary { overflow-wrap: anywhere; }
 .publish-fieldset { border: 1px solid var(--line); border-radius: 9px; min-width: 0; margin: 0 0 12px; padding: 8px 12px 12px; }

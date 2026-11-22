@@ -533,11 +533,6 @@ async function loadPreferences() {
         if (field.type === "checkbox") field.checked = preferences[field.name];
         else field.value = preferences[field.name];
     }
-    for (const platform of destinations) {
-        const entry = preferences.destinations[platform];
-        byId(platform + "-account").value = entry?.account || "";
-        byId(platform + "-enabled").checked = Boolean(entry?.enabled);
-    }
     showTrackField();
     await loadTracks(preferences.music_track);
 }
@@ -546,17 +541,11 @@ async function savePreferences(event) {
     event.preventDefault();
     const button = byId("save-settings");
     button.disabled = true;
-    const data = {destinations: {}};
+    const data = {};
     for (const field of settingsForm.elements) {
         if (!field.name) continue;
         data[field.name] = field.type === "checkbox" ? field.checked
             : field.type === "number" ? Number(field.value) : field.value;
-    }
-    for (const platform of destinations) {
-        data.destinations[platform] = {
-            account: byId(platform + "-account").value,
-            enabled: byId(platform + "-enabled").checked,
-        };
     }
     try {
         await api("/api/settings", jsonRequest("PUT", data));
@@ -603,6 +592,7 @@ byId("page-description").textContent = subtitle;
 document.title = title + " | Viral Shorts Studio";
 byId("clip-workspace").hidden = route === "settings";
 settingsForm.hidden = route !== "settings";
+byId("publishing").hidden = route !== "settings";
 byId("create-panel").hidden = route !== "studio";
 byId("clip-workspace").classList.toggle("library-only", route === "library");
 if (route === "library") byId("library-title").textContent = "Exports";

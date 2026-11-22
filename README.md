@@ -98,7 +98,7 @@ The studio uses NVIDIA H.264 encoding when available and falls back to CPU encod
 
 ## Publish your clips
 
-**Publishing destinations** connects YouTube, Instagram, and Facebook. Check **Preselect** for the connected destinations you want selected when you open Share, then save the settings.
+Use **Settings → Publishing destinations** to connect an account. **Select by default** saves immediately and controls which connected accounts start checked when you open Share.
 
 ### Upload a YouTube Short manually
 
@@ -110,26 +110,32 @@ Use the same exported MP4 for manual uploads through [Instagram](https://www.ins
 
 ### Direct upload from a local studio
 
-Open the studio at `http://127.0.0.1:8000`, then go to **Settings → Publishing destinations**. Connect your own accounts once. The studio sends exports directly to the platform APIs over the internet.
+Open [Publishing destinations in your local studio](http://127.0.0.1:8000/settings#publishing). Each account has its own setup. You can start with YouTube and add the others later.
 
-**Connect YouTube**
+#### Connect YouTube for your own channel
 
-1. In Google Cloud Console, create or select a project and enable **YouTube Data API v3**.
-2. Configure **Google Auth Platform** for the project. If the app uses an external audience and is in testing, add the Google account that manages the channel to **Test users**.
-3. Under **Clients**, create a **Desktop app** OAuth client and download its JSON file.
-4. In the studio, expand **Connect YouTube**, select that file, and choose **Authorize with Google**. Select the intended channel and grant both requested permissions. Check that the connected channel name is correct when the studio returns to Settings.
+1. Sign in with the Google account that manages your YouTube channel. Open [Google’s personal setup](https://console.cloud.google.com/auth/overview/personal), choose or create a project, select **Desktop app**, and continue. In the confirmation, click **Download JSON** before closing it. This is the sign-in file you’ll use in the studio.
+2. Open [YouTube Data API v3](https://console.cloud.google.com/apis/library/youtube.googleapis.com). Select the **same project** in the top bar and click **Enable**. If the page shows **Manage**, the API is already enabled.
+3. Back in the studio, open **Set up YouTube**, select the downloaded file under **Sign-in file from Google**, and click **Continue with Google**. Grant both requested permissions. When you return to Settings, check that the card shows the right channel name.
 
-Google may expire refresh tokens for apps in testing after seven days. Reauthorize from Settings if prompted. [Google desktop OAuth](https://developers.google.com/identity/protocols/oauth2/native-app) · [Google OAuth token expiration](https://developers.google.com/identity/protocols/oauth2#expiration) · [YouTube upload guide](https://developers.google.com/youtube/data/guides/uploading_a_video)
+**Using an existing External project?** In [Google Auth Platform → Clients](https://console.cloud.google.com/auth/clients), choose **Create client → Desktop app** and download the new JSON file. If the project is in Testing, first go to [Audience](https://console.cloud.google.com/auth/audience), select **Add users** under **Test users**, and add the account that manages the channel. Testing tokens can expire after seven days. Google Personal mode works for the single Google account that created the client. [Google setup and Personal mode](https://support.google.com/cloud/answer/15544987) · [Google token expiration](https://developers.google.com/identity/protocols/oauth2#expiration)
 
-**Connect Facebook and Instagram**
+#### Connect Facebook and Instagram
 
-1. Use a Facebook Page you can publish to. For Instagram, link your professional account to that Page.
-2. Configure a Meta app for **Facebook Login for Business** and authorize the account in Meta's **Graph API Explorer** using that app. For Facebook, grant `pages_show_list`, `pages_read_engagement`, and `pages_manage_posts`. To include Instagram, also grant `instagram_basic` and `instagram_content_publish`. In development, use a Meta account with the appropriate app role. Other users may require Advanced Access or App Review.
-3. Copy the numeric Facebook Page ID and your **User access token** into **Connect a Facebook Page and linked Instagram account**, then choose **Connect Meta accounts**. The studio checks permissions, obtains the Page token, and displays the linked publishing accounts.
+1. Use a Facebook Page you can publish to. To add Instagram, switch Instagram to a professional account and link it to that Facebook Page.
+2. In [Meta My Apps](https://developers.facebook.com/apps/), choose **Create App**. Look under **Content management** for **Manage everything on your Page**. For Instagram on the same app, choose **Instagram API with Facebook Login**.
+3. Open [Graph API Explorer](https://developers.facebook.com/tools/explorer/), choose your app in the **Meta App** dropdown, then choose **User or Page → Get User Access Token**. Select the permissions below, click **Generate Access Token**, and approve access to the Page in the Meta prompt. Copy the token shown in Graph API Explorer.
+4. Back in the studio, open **Set up Facebook & Instagram**, paste the token into **User Token from Meta**, and click **Find my Pages**. Choose your Page by name and click **Connect this Page**. The card shows the Page and any linked Instagram account it can publish to.
 
-If your Meta token expires, generate a new one and reconnect. Facebook Page Reels accept 9:16 clips between 3 and 90 seconds. [Graph API Explorer](https://developers.facebook.com/docs/graph-api/guides/explorer/) · [Instagram publishing](https://developers.facebook.com/documentation/instagram-platform/content-publishing/) · [Facebook Reels publishing](https://developers.facebook.com/documentation/video-api/guides/reels-publishing)
+| What you want to connect | Permissions to select in Graph API Explorer |
+| --- | --- |
+| Find your Pages | `pages_show_list`, `pages_read_engagement` |
+| Publish Facebook Reels | Add `pages_manage_posts` |
+| Publish Instagram Reels | Add `instagram_basic` and `instagram_content_publish` |
 
-**Upload clips**
+If you don’t see a permission in the Explorer, check the selected Meta app, its use cases, and your app role. If your Page is missing from the studio picker, generate a new User Token and grant access to that Page in the Meta prompt. [Graph API Explorer guide](https://developers.facebook.com/docs/graph-api/guides/explorer/) · [Instagram publishing](https://developers.facebook.com/documentation/instagram-platform/content-publishing/) · [Facebook Reels publishing](https://developers.facebook.com/documentation/video-api/guides/reels-publishing)
+
+#### Upload a clip
 
 1. Use **Share clip** on an export or **Share clips** for a batch. Choose the clips and destinations, then review each title and caption. The form starts with the saved posting kit, including its hashtags.
 2. For YouTube, select visibility and audience. Visibility starts at **Private**. Instagram follows the account's visibility, and Facebook Page Reels publish publicly. Set the AI media disclosure where applicable and confirm you have permission to publish.
