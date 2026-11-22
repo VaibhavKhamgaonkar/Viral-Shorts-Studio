@@ -286,7 +286,8 @@ class SocialUploadTests(unittest.TestCase):
                     response(body={"success": True}), response(body={"success": True}),
                     response(body={"status": {"publishing_phase": {"publish_status": "published"}}}),
                 ] if platform == "facebook" else [
-                    response(body={"id": "567"}), response(body={"success": True}),
+                    response(body={"id": "567", "uri": "https://rupload.facebook.com/ig-api-upload/v27.0/567"}),
+                    response(body={"success": True}),
                     response(body={"status_code": "FINISHED"}), response(body={"id": "678"}),
                     response(body={"permalink": "https://www.instagram.com/reel/example/"}),
                 ]
@@ -298,6 +299,57 @@ class SocialUploadTests(unittest.TestCase):
                 self.assertTrue(receipt["transferred"])
                 self.assertTrue(result.startswith(f"https://www.{platform}.com/reel/"))
                 self.assertTrue(call.call_args_list[0].args[1].startswith(META))
+
+    def test_instagram_replaces_incomplete_legacy_container_with_copy(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = PublishStore(root / "publishing")
+            store.save_connection("meta", {"token": "page-token", "facebook": {"id": "123"},
+                                          "instagram": {"id": "456", "name": "@snapodd"}})
+            video = root / "clip.mp4"
+            video.write_bytes(b"old MP4")
+            submission = {"description": "Caption", "synthetic_media": False}
+            store.save_receipt("upload", {"container": "777", "transferred": False, "submission": submission})
+            payload = {"platform": "instagram", "key": "upload", "account_id": "456", "submission": submission,
+                       "revision": str(video.stat().st_mtime_ns)}
+            uri = "https://rupload.facebook.com/ig-api-upload/v27.0/888"
+
+            def prepare(_source, output, _update):
+                output.write_bytes(b"prepared MP4")
+
+            with patch("core.social_upload.prepare_instagram_copy", side_effect=prepare) as encode, \
+                    patch("core.social_upload.http", side_effect=[
+                        response(body={"id": "123"}), response(body={"status_code": "IN_PROGRESS"}),
+                        response(body={"offset": 0}), response(body={"id": "888", "uri": uri}),
+                        response(body={"success": True}), response(body={"status_code": "FINISHED"}),
+                        response(body={"id": "999"}), response(body={"permalink": "https://www.instagram.com/reel/posted/"}),
+                    ]) as http:
+                self.assertEqual(store.upload(payload, video, Mock())["url"], "https://www.instagram.com/reel/posted/")
+            encode.assert_called_once()
+            self.assertEqual(http.call_args_list[4].args, ("POST", uri))
+            self.assertEqual(http.call_args_list[4].kwargs["headers"]["file_size"], "12")
+            self.assertEqual(video.read_bytes(), b"old MP4")
+
+    def test_instagram_resumes_at_server_offset_and_defers_processing(self):
+        uri = "https://rupload.facebook.com/ig-api-upload/v27.0/888"
+        receipt = {"container": "888", "instagram_uri": uri, "transferred": False}
+        with patch("core.social_upload.http", side_effect=[
+            response(body={"status_code": "IN_PROGRESS"}), response(body={"offset": 3}),
+            response(body={"success": True}), response(body={"status_code": "IN_PROGRESS"}),
+            response(body={"status_code": "FINISHED"}), response(body={"id": "999"}),
+            response(body={"permalink": "https://www.instagram.com/reel/posted/"}),
+        ]) as http:
+            with self.assertRaises(JobDeferred) as waiting:
+                instagram_upload(io.BytesIO(b"abcdef"), 6, "123", "token", receipt, receipt.update, Mock())
+            self.assertEqual(waiting.exception.delay, 60)
+            self.assertTrue(receipt["transferred"])
+            self.assertEqual(instagram_upload(None, 6, "123", "token", receipt, receipt.update, Mock()),
+                             "https://www.instagram.com/reel/posted/")
+        transfer = http.call_args_list[2]
+        self.assertEqual(transfer.args, ("POST", uri))
+        self.assertEqual(transfer.kwargs["headers"]["offset"], "3")
+        self.assertEqual(transfer.kwargs["headers"]["Content-Length"], "3")
+        self.assertEqual([call.args[0] for call in http.call_args_list[4:]], ["GET", "POST", "GET"])
 
     def test_batch_queues_independent_destinations_and_skips_completed_uploads(self):
         with TemporaryDirectory() as tmp:

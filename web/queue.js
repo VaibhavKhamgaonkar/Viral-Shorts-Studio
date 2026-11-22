@@ -8,7 +8,7 @@ const phases = [
     ["finalize", "Save clips"],
 ];
 const publishPhases = [["source", "Account"], ["export", "Upload MP4"], ["finalize", "Confirm upload"]];
-const statusLabels = {queued: "Waiting", running: "Running", checking: "Processing on Facebook", completed: "Ready", failed: "Stopped"};
+const statusLabels = {queued: "Waiting", running: "Running", completed: "Ready", failed: "Stopped"};
 const knownJobs = new Map(JSON.parse(sessionStorage.getItem("studio-queue-status") || "[]"));
 let queueSnapshot = [];
 let queueRequest;
@@ -81,6 +81,7 @@ function queueCard(job, historyOpen) {
     card.setAttribute("aria-labelledby", title.id);
     name.append(title, element("code", null, "Task #" + job.job_id));
     const label = job.status === "queued" && job.position ? "Waiting · #" + job.position
+        : job.status === "checking" ? "Processing on " + job.source.split(" · ")[0]
         : job.status === "completed" && job.kind === "publish" ? "Uploaded" : statusLabels[job.status];
     heading.append(name, element("span", "queue-status", label));
     card.append(heading);
@@ -227,7 +228,7 @@ function renderQueue() {
     const waiting = active.filter((job) => job.status === "queued").length;
     const checking = active.filter((job) => job.status === "checking").length;
     const summary = active.length ? (active.length - waiting - checking) + " running · " + waiting + " waiting"
-        + (checking ? " · " + checking + " processing on Facebook" : "") : "No active tasks";
+        + (checking ? " · " + checking + " processing on platform" : "") : "No active tasks";
     const count = byId("tasks-count");
     count.textContent = active.length > 99 ? "99+" : active.length;
     count.hidden = !active.length;

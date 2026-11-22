@@ -10,6 +10,7 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from urllib.parse import urlencode, urlsplit
 
+import av
 import requests
 
 from core.job_queue import JobDeferred
@@ -35,6 +36,7 @@ YOUTUBE_SCOPES = (
 )
 CHUNK_SIZE = 8 * 1024 * 1024
 FACEBOOK_CHECK_DELAY = 30
+INSTAGRAM_MAX_BYTES = 300_000_000
 META_RECONNECT = "The Facebook and Instagram connection has expired. Reconnect the same Page in Settings, then resume the upload."
 
 
@@ -282,24 +284,9 @@ class PublishStore:
             return True
         if not duration or size < 25_000_000 or size * 8 / duration <= 7_000_000:
             return False
-        report("export", "Preparing Facebook upload copy", "Reducing the file size while keeping the exported video.", 0)
-        with NamedTemporaryFile(dir=copy.parent, suffix=".mp4", delete=False) as placeholder:
-            temporary = Path(placeholder.name).resolve()
-        try:
-            command = [get_ffmpeg_cmd(), "-hide_banner", "-loglevel", "error", "-y", "-i", str(video.resolve()),
-                       "-map", "0:v:0", "-map", "0:a:0?", *CPU_ENCODER,
-                       "-pix_fmt", "yuv420p", "-maxrate", "4M", "-bufsize", "8M",
-                       "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(temporary)]
-            progress = lambda percent: report("export", "Preparing Facebook upload copy", "Encoding a smaller MP4.", percent)
-            result, _ = run_encoder(command, copy.parent, duration, progress)
-            if result == 0 and 0 < temporary.stat().st_size < size:
-                temporary.replace(copy)
-                return True
-        except OSError:
-            pass
-        finally:
-            temporary.unlink(missing_ok=True)
-        return False
+        return encode_upload_copy(video, duration, copy, size - 1, "Facebook", report, [
+            "-maxrate", "4M", "-bufsize", "8M",
+        ])
 
     def upload(self, payload, video, update):
         platform, key = payload["platform"], payload["key"]
@@ -323,7 +310,10 @@ class PublishStore:
         if str(info.st_mtime_ns) != payload["revision"] or not info.st_size:
             raise PublishError("This export changed. Reopen the clip library and select the current version.")
         copy = self.directory / "uploads" / (key + ".mp4")
-        if not (platform == "facebook" and receipt.get("finish_accepted")):
+        confirming = (platform == "facebook" and receipt.get("finish_accepted")) or (
+            platform == "instagram" and receipt.get("transferred")
+        )
+        if not confirming:
             update("source", "Authorizing destination", account["name"])
             if platform in {"facebook", "instagram"}:
                 self.verify_meta(saved["meta"])
@@ -335,6 +325,19 @@ class PublishStore:
             if receipt.get("optimized"):
                 if not copy.is_file():
                     raise PublishError("The saved Facebook upload copy is missing. Export a new version to start a new upload.")
+                source = copy
+        elif platform == "instagram":
+            token = saved["meta"]["token"]
+            if not receipt.get("instagram_copy"):
+                if instagram_original_received(receipt, info.st_size, token):
+                    if not receipt.get("transferred"):
+                        checkpoint(transferred=True)
+                else:
+                    prepare_instagram_copy(video, copy, update)
+                    checkpoint(instagram_copy=True, container=None, instagram_uri=None, transferred=False)
+            if receipt.get("instagram_copy"):
+                if not copy.is_file():
+                    raise PublishError("The saved Instagram upload copy is missing. Export a new version to start a new upload.")
                 source = copy
         with source.open("rb") as media:
             opened = os.fstat(media.fileno())
@@ -356,12 +359,51 @@ class PublishStore:
                                        receipt, checkpoint, update)
         completed = {"complete": True, "url": url}
         self.save_receipt(key, completed)
-        if receipt.get("optimized"):
+        if receipt.get("optimized") or receipt.get("instagram_copy"):
             try:
                 copy.unlink(missing_ok=True)
             except OSError:
                 pass
         return completed
+
+
+def encode_upload_copy(video, duration, copy, size_limit, platform, report, video_options):
+    stage = f"Preparing {platform} upload copy"
+    detail = f"Encoding an MP4 for {platform}."
+    report("export", stage, detail, 0)
+    with NamedTemporaryFile(dir=copy.parent, suffix=".mp4", delete=False) as placeholder:
+        temporary = Path(placeholder.name).resolve()
+    try:
+        command = [get_ffmpeg_cmd(), "-hide_banner", "-loglevel", "error", "-y", "-i", str(video.resolve()),
+                   "-map", "0:v:0", "-map", "0:a:0?", *CPU_ENCODER, "-pix_fmt", "yuv420p", *video_options,
+                   "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(temporary)]
+        result, _ = run_encoder(command, copy.parent, duration, lambda pct: report("export", stage, detail, pct))
+        if result == 0 and 0 < temporary.stat().st_size <= size_limit:
+            temporary.replace(copy)
+            return True
+    except OSError:
+        pass
+    finally:
+        temporary.unlink(missing_ok=True)
+    return False
+
+
+def prepare_instagram_copy(video, copy, report):
+    if copy.is_file():
+        return
+    with av.open(str(video)) as media:
+        stream = media.streams.video[0]
+        duration = float(stream.duration * stream.time_base) if stream.duration else (media.duration or 0) / av.time_base
+        rate = stream.average_rate or stream.base_rate or 30
+    if not 3 <= duration <= 900:
+        raise PublishError("Instagram Reels must be between 3 seconds and 15 minutes. Trim the clip in the editor.")
+    rate = rate if 23 <= rate <= 60 else 60 if rate > 60 else 30
+    # Leave room for AAC, muxing overhead and short bitrate bursts.
+    bitrate = min(4_000_000, int(280_000_000 * 8 / duration) - 128_000)
+    options = ["-vf", "scale='min(iw,1920)':-2", "-r", str(rate), "-g", "120", "-x264-params", "open-gop=0",
+               "-maxrate", str(bitrate), "-bufsize", str(bitrate * 2), "-ar", "48000", "-ac", "2", "-use_editlist", "0"]
+    if not encode_upload_copy(video, duration, copy, INSTAGRAM_MAX_BYTES, "Instagram", report, options):
+        raise PublishError("The studio could not prepare an Instagram-compatible MP4. Try a shorter export and resume.")
 
 
 def upload_location(value, hostname):
@@ -438,6 +480,13 @@ def meta_transfer(media, size, url, token, update, offset=0):
     response = http("POST", upload_location(url, "rupload.facebook.com"), token=token, scheme="OAuth",
                     headers={"offset": str(offset), "file_size": str(size), "Content-Type": "application/octet-stream",
                              "Content-Length": str(size - offset)}, data=media)
+    if response.status_code == 400 and urlsplit(url).path.startswith("/ig-api-upload/"):
+        try:
+            debug = response.json().get("debug_info", {})
+        except (AttributeError, ValueError):
+            debug = None
+        if isinstance(debug, dict) and debug.get("type") == "ProcessingFailedError":
+            raise PublishError("Instagram rejected the MP4 during transfer. Open Tasks and resume the upload to retry the saved copy.")
     if json_response(response).get("success") is not True:
         raise PublishError("Meta did not confirm the video transfer. Retry this task from the clip library.")
 
@@ -562,26 +611,34 @@ def instagram_upload(media, size, account_id, token, receipt, checkpoint, update
                        "caption": receipt["submission"]["description"],
                        "is_ai_generated": str(receipt["submission"]["synthetic_media"]).lower()})
         container = service_id(result.get("id"))
-        checkpoint(container=container, transferred=False)
+        uri = upload_location(result.get("uri"), "rupload.facebook.com")
+        checkpoint(container=container, instagram_uri=uri, transferred=False, processing_checks=0)
+        offset = 0
         status = ""
+    else:
+        uri = instagram_upload_uri(receipt)
+        offset = None
     if status == "ERROR":
         raise PublishError("Instagram could not process this video. Edit or re-export it and try the new version.")
     if status != "FINISHED" and not receipt.get("transferred"):
-        meta_transfer(media, size, f"https://rupload.facebook.com/ig-api-upload/{META_VERSION}/{container}", token, update)
+        if offset is None:
+            offset = instagram_offset(uri, token, size)
+        if offset < size:
+            meta_transfer(media, size, uri, token, update, offset)
         checkpoint(transferred=True)
-    update("finalize", "Publishing Reel", "Waiting for Instagram to process the video.")
-    for attempt in range(5):
-        if status == "FINISHED":
-            break
-        if attempt:
-            time.sleep(60)
         status = graph("GET", container, token, params={"fields": "status_code"}).get("status_code")
-        if status == "PUBLISHED":
-            return ""
-        if status in {"ERROR", "EXPIRED"}:
-            raise PublishError("Instagram could not process this Reel. Check the export and try again.")
+    if status == "PUBLISHED":
+        return ""
+    update("finalize", "Publishing Instagram Reel", "Waiting for Instagram to process the video.")
+    if status in {"ERROR", "EXPIRED"}:
+        raise PublishError("Instagram could not process this Reel. Check the export and try again.")
     if status != "FINISHED":
-        raise PublishError("Instagram is still processing the Reel. Retry to check the same upload.")
+        attempts = receipt.get("processing_checks", 0) + 1
+        if attempts >= 5:
+            checkpoint(processing_checks=0)
+            raise PublishError("Instagram is still processing the Reel. Resume upload to check the same container.")
+        checkpoint(processing_checks=attempts)
+        raise JobDeferred(60)
     published = graph("POST", account_id + "/media_publish", token, data={"creation_id": container})
     media_id = service_id(published.get("id"))
     try:
@@ -589,3 +646,28 @@ def instagram_upload(media, size, account_id, token, receipt, checkpoint, update
         return upload_location(permalink, "www.instagram.com")
     except PublishError:
         return ""
+
+
+def instagram_upload_uri(receipt):
+    uri = receipt.get("instagram_uri") or f"https://rupload.facebook.com/ig-api-upload/{META_VERSION}/{receipt['container']}"
+    return upload_location(uri, "rupload.facebook.com")
+
+
+def instagram_offset(uri, token, size):
+    response = http("GET", uri, token=token, scheme="OAuth", timeout=(5, 15))
+    offset = json_response(response).get("offset")
+    if type(offset) is not int or not 0 <= offset <= size:
+        raise PublishError("Instagram did not return a valid transfer position. Resume upload to check again.")
+    return offset
+
+
+def instagram_original_received(receipt, size, token):
+    container = receipt.get("container")
+    if not container:
+        return False
+    status = graph("GET", container, token, params={"fields": "status_code"}).get("status_code")
+    if status in {"FINISHED", "PUBLISHED"}:
+        return True
+    return status == "IN_PROGRESS" and (
+        receipt.get("transferred") or instagram_offset(instagram_upload_uri(receipt), token, size) == size
+    )
