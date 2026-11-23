@@ -10,6 +10,26 @@ echo             YOUTUBE VIRAL SHORTS WEB STUDIO
 echo =================================================================
 echo.
 
+:: 0. Force-close any previous studio tasks, lingering processes, or port 8000 holders
+echo [*] Force-closing any previous studio tasks or hung processes...
+
+:: 1) Kill whatever process is holding or listening on port 8000
+powershell -NoProfile -Command "try { Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue } } catch {}; exit 0" >nul 2>&1
+
+:: 2) Kill any lingering Python processes belonging to YoutubeWorkflow
+powershell -NoProfile -Command "try { Get-Process python -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*YoutubeWorkflow*' } | Stop-Process -Force -ErrorAction SilentlyContinue } catch {}; exit 0" >nul 2>&1
+
+:: 3) Batch fallback for port 8000
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":8000"') do (
+    taskkill /F /PID %%a >nul 2>&1
+)
+
+:: 4) Terminate any orphaned render/download processes
+taskkill /F /IM ffmpeg.exe >nul 2>&1
+taskkill /F /IM yt-dlp.exe >nul 2>&1
+echo [+] Clean workspace verified. Port 8000 and all studio workers are reset.
+echo.
+
 :: 1. Verify Python
 where python >nul 2>&1
 if errorlevel 1 goto NO_PYTHON

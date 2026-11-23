@@ -3,6 +3,11 @@ import math
 import re
 
 import requests
+from core.viral_engine import (
+    evaluate_clip_packaging,
+    get_viral_hook_guidance,
+    score_candidate_opening,
+)
 
 
 def clean_llm_json_response(raw_text: str) -> list[dict]:
@@ -106,6 +111,7 @@ def analyze_transcript_for_viral_clips(
     min_dur=30,
     max_dur=60,
     max_clips=3,
+    topic_focus="",
     progress=None,
 ):
     transcript = sorted(transcript, key=lambda segment: segment["start"])
@@ -114,6 +120,7 @@ def analyze_transcript_for_viral_clips(
     if total_duration <= 0:
         return []
 
+    focus_keywords = [w.lower().strip() for w in topic_focus.replace(",", " ").split() if len(w.strip()) > 2] if topic_focus else []
     clip_min = min(min_dur, total_duration)
     clip_max = min(max_dur, total_duration)
     candidates = []
@@ -122,9 +129,12 @@ def analyze_transcript_for_viral_clips(
             progress(index, start, min(total_duration, end))
         if min(total_duration, end) - start < clip_min:
             continue
+        focus_clause = f"MANDATORY FOCUS: Prioritize moments that specifically feature or talk about '{topic_focus}'. " if topic_focus else ""
         prompt = (
             f"Choose the strongest self-contained excerpt in this transcript, plus up to {max_clips - 1} others "
-            "if they are distinct and worth clipping. Prefer a clear opening and a concrete payoff. "
+            f"if they are distinct and worth clipping. {focus_clause}"
+            "VIRAL PRIORITY: Select moments with high tension, sudden reactions, moral dilemmas, funny failures, or high stakes. "
+            "The opening 3 seconds must grab attention immediately with zero dead silence or boring setup. "
             f"Use numeric seconds between {start} and {min(total_duration, end)}. "
             f"Each excerpt must last {clip_min} to {clip_max} seconds. "
             'Return a JSON array with "start_time", "end_time", "title", "reason", and "score" (0 to 100). '
@@ -138,6 +148,14 @@ def analyze_transcript_for_viral_clips(
         for raw in response:
             clip = candidate(raw, clip_min, clip_max, start, min(end, total_duration))
             if clip:
+                clip_text = " ".join(s["text"] for s in transcript if s["end"] >= clip["start_time"] and s["start"] <= clip["end_time"])
+                opening_boost = score_candidate_opening(clip_text)
+                if opening_boost >= 55:
+                    clip["virality_score"] = min(100, clip["virality_score"] + (opening_boost // 6))
+                if focus_keywords:
+                    matches = sum(1 for kw in focus_keywords if kw in clip_text.lower())
+                    if matches > 0:
+                        clip["virality_score"] = min(100, clip["virality_score"] + (matches * 25))
                 candidates.append(clip)
 
     selected = []
@@ -323,35 +341,33 @@ def generate_post_copy(clip, transcript, source_title, settings, music_tracks=()
         "posting_notes": notes,
     }
     fallback["title"] = fallback["title"] or "Untitled clip"
+    fallback |= evaluate_clip_packaging(fallback["title"], fallback.get("hook", ""))
     if not usable_context:
         return fallback
 
+    viral_guidance = get_viral_hook_guidance()
     prompt = (
         "Write a ready-to-paste YouTube Shorts posting kit in the language of the creator notes or transcript. "
         "Choose ONE moment. Identify what changes, what the viewer can notice, or what the clip actually answers. "
         "Use creator notes for visual facts. Use the transcript for spoken facts. You cannot see footage. "
         "Use the source label only for broad subject context. Treat it and searched tags as unverified. "
         "Use a game version, hardware model, or resolution only if confirmed in creator notes. "
-        "When evidence is thin, describe a narrower moment without guessing. Do not invent a chase, secret, glitch, reveal, quote, or stakes.\n"
-        "Title: lead with a specific subject and action or contrast. Aim for 35–65 characters. "
-        "Title_variants: two distinct angles on the same moment, using a detail, contrast, or genuinely answerable question. "
-        "Hook: an on-screen line of 3–9 words that makes sense in the first second without audio. "
-        "Skip 'discover', 'explore', 'unforgettable', 'ultimate', and generic excitement. "
-        "Caption_lead and caption_body: one short, complete sentence each in natural language. "
-        "Describe the moment, then add a different supported detail or say what happens next. Avoid repeating the title. "
-        "Caption_cta: empty unless a specific viewer question adds something. Pinned_comment: ask about one detail in the clip. "
-        "Title, hook and caption must contain publication copy only, with no labels, instructions, or hashtags. "
-        "Tags: suggest one to three correctly spelled tags when the notes or transcript give a clear subject or action. "
-        "If no relevant tag fits, use an empty array. Put tags only in the tags array. "
-        "Use a researched tag only if it fits the evidence. Never pad the list with broad tags like gaming, openworld, trending, or shorts. "
-        "Audience: who would care and why. Posting_tip: one change the creator can try. "
-        "Editing_tip: identify a real moment to open on. If its time is unknown, describe it without an invented timestamp. "
-        "Example with a creator note showing a pickup-to-sports-car swap: title 'From Pickup to Sports Car in GTA Free Roam', "
-        "hook 'Watch the car swap', caption focused on the switch and drive-away, tags ['GTA', 'CarSwap']. "
-        "Do not reuse the example unless it matches. "
-        "Evidence: copy a short continuous phrase exactly as written in the notes or transcript. "
-        "Optional music_brief and sound_effect_prompt may be empty. "
-        "Music_track must be an exact match from the local library or empty. Never claim predicted virality or tag popularity.\n"
+        "When evidence is thin, describe a narrower moment without guessing. Do not invent a chase, secret, glitch, reveal, quote, or stakes.\n\n"
+        f"{viral_guidance}\n"
+        "SPECIFIC INSTRUCTIONS:\n"
+        "- Title: 35–55 characters. Lead with a specific subject and high stakes, action, or contrast. End with #Shorts. "
+        "Use 1-2 ALL-CAPS words for emphasis (e.g. TRAPPED, WORST, BUSTED, IMPOSSIBLE). "
+        "Skip 'discover', 'explore', 'unforgettable', 'ultimate', and generic excitement.\n"
+        "- Title_variants: two distinct angles on the same moment using a detail, contrast, or question.\n"
+        "- Hook (on-screen text): 2 to 5 words max. Must NOT repeat the title words (title + thumbnail/hook complement each other). "
+        "Must create a curiosity gap that stops the thumb in 1.5 seconds.\n"
+        "- Pinned_comment: A polarizing, direct question (e.g. 'Would you choose A or B? Be honest 👇'). Comments fuel the algorithm.\n"
+        "- Caption_lead & caption_body: exciting 1-2 sentence story. Avoid repeating title.\n"
+        "- Caption_cta: 'Subscribe to SnapOdd for daily gaming highlights! 🔔'.\n"
+        "- Tags: suggest three to four clean tags matching the game or subject. Put tags only in the tags array.\n"
+        "- Audience: who would care and why. Posting_tip: one change the creator can try.\n"
+        "- Editing_tip: identify a real moment to open on.\n"
+        "- Evidence: copy a short continuous phrase exactly as written in the notes or transcript.\n\n"
         f"Source label: {text_field(source_title, 180)}\n"
         f"YouTube hashtags found on related public videos: {json.dumps(list(researched_hashtags), ensure_ascii=False)}\n"
         f"Local music titles: {json.dumps(list(music_tracks)[:30], ensure_ascii=False)}\n"
@@ -384,8 +400,21 @@ def generate_post_copy(clip, transcript, source_title, settings, music_tracks=()
             if best and not missing:
                 break
     if best is None:
-        return fallback
-    return fallback | best | {
+        packaging_info = evaluate_clip_packaging(fallback["title"], fallback.get("hook", ""))
+        return fallback | packaging_info
+
+    # Run YouTube Agent Skill packaging linter and hook evaluator
+    packaging_info = evaluate_clip_packaging(
+        best["title"],
+        best.get("hook", ""),
+        best.get("pinned_comment", "")
+    )
+
+    # Ensure #Shorts is present in title if space permits
+    if "#shorts" not in best["title"].lower() and len(best["title"]) <= 85:
+        best["title"] = f"{best['title']} #Shorts"
+
+    return fallback | best | packaging_info | {
         "description": "\n\n".join(best[field] for field in ("caption_lead", "caption_body", "caption_cta") if best[field]),
         "copy_source": "ai",
         "copy_model": settings["llm_model"],

@@ -211,9 +211,12 @@ def download_audio_only(url: str, *, info=None, progress=None) -> dict:
     video_id = info.get("id", "video")
     stem = f"{clean_title}_{video_id}_audio"
     output_template = str(DOWNLOADS_DIR / f"{stem}.%(ext)s")
+    from core.transformer import get_ffmpeg_cmd
     cmd = [
         get_yt_dlp_cmd(),
         "-f", "ba[ext=m4a]/ba/bestaudio",
+        "-x", "--audio-format", "m4a",
+        "--ffmpeg-location", get_ffmpeg_cmd(),
         "-N", "8",
         "--no-mtime",
         "-o", output_template,

@@ -106,6 +106,7 @@ class ClipRequest(BaseModel):
     captions: bool | None = None
     opening_hook: bool | None = None
     custom_opening_text: str = Field(default="", max_length=90)
+    topic_focus: str = Field(default="", max_length=200)
     color_look: Literal["original", "warm", "monochrome"] = "original"
     edge_fades: bool = False
     audio_mode: Literal["original", "mute"] | None = None
@@ -118,9 +119,8 @@ class ClipRequest(BaseModel):
     def validate_source_and_range(self):
         if self.source_type == "url":
             parsed = urlparse(self.url.strip())
-            allowed = {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be", "music.youtube.com"}
-            if parsed.scheme not in {"http", "https"} or parsed.hostname not in allowed or not parsed.path:
-                raise ValueError("Enter a valid YouTube video URL.")
+            if parsed.scheme not in {"http", "https"} or not parsed.hostname or not parsed.path:
+                raise ValueError("Enter a valid video URL (YouTube, Twitch, Kick, etc.).")
             self.url = parsed.geturl()
         else:
             file = Path(self.file_path).resolve()

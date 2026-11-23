@@ -155,6 +155,22 @@ function renderKit(clip, selectedTitle) {
     }
 
     const sections = [];
+    if (clip.packaging_score != null) {
+        const viralCard = element("div", "kit-viral-card");
+        const header = element("div", "kit-viral-header");
+        const scoreBadge = element("span", "kit-score-badge", "🎯 Packaging Score: " + clip.packaging_score + "/100 · " + (clip.packaging_verdict || "READY"));
+        if (clip.hook_formula && clip.hook_formula !== "Unclassified") {
+            const formulaBadge = element("span", "kit-formula-badge", "★ " + clip.hook_formula);
+            header.append(scoreBadge, formulaBadge);
+        } else {
+            header.append(scoreBadge);
+        }
+        viralCard.append(header);
+        if (clip.packaging_feedback) {
+            viralCard.append(element("p", "kit-viral-feedback", clip.packaging_feedback));
+        }
+        sections.push(viralCard);
+    }
     if (clip.copy_needs_review) {
         sections.push(element("p", "kit-review", "This draft was written before the latest edit. Review it against the new clip or regenerate it."));
     } else if (!clip.copy_ready || !(clip.posting_kit_version >= 4)) {

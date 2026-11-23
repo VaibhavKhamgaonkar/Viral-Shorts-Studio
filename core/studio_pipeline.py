@@ -113,6 +113,7 @@ def run_job(job_id, request, settings, update, cleanup):
         clips = analyze_transcript_for_viral_clips(
             transcript, duration, settings["llm_base_url"], settings["llm_api_key"], settings["llm_model"],
             min_dur=clip_min, max_dur=clip_max, max_clips=settings["max_clips_to_generate"],
+            topic_focus=getattr(request, "topic_focus", "") if hasattr(request, "topic_focus") else request.get("topic_focus", "") if isinstance(request, dict) else "",
             progress=lambda window, start, end: update(
                 "selection", "Finding highlights", f"Scanning transcript window {window} ({start / 60:.1f}–{end / 60:.1f} min).",
             ),

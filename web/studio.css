@@ -659,6 +659,11 @@ dialog::backdrop { background: #231a29b5; }
 .kit-hashtag-controls .button { min-height: 36px; margin: 0; }
 .kit-hashtag-search p { margin-top: 0; }
 .kit-empty + .kit-hashtags { margin-top: 10px; }
+.kit-viral-card { margin: 0 0 12px; padding: 10px 14px; background: #eef4db; border: 1px solid #c4d196; border-radius: 8px; }
+.kit-viral-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.kit-score-badge { font-weight: 700; font-size: .88rem; color: #2d3f0c; }
+.kit-formula-badge { font-size: .76rem; font-weight: 700; background: #394d12; color: #f2f7e4; padding: 2px 7px; border-radius: 4px; }
+.kit-viral-feedback { margin-top: 6px; font-size: .80rem; color: #435422; line-height: 1.45; word-break: break-word; }
 .kit-review { margin: 0 0 12px; padding: 8px 10px; background: #f3eee6; border-radius: 6px; }
 .kit-notes, .kit-guidance { margin-top: 10px; }
 .kit-notes .field { margin: 9px 0 0; }

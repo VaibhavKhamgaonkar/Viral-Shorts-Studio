@@ -228,6 +228,7 @@ function readClipForm() {
         captions: byId("job-captions").checked,
         opening_hook: byId("job-opening-hook").checked,
         custom_opening_text: byId("custom-opening-text").value.trim(),
+        topic_focus: byId("topic-focus") ? byId("topic-focus").value.trim() : "",
         color_look: byId("color-look").value,
         edge_fades: byId("clip-fades").value === "fade",
         audio_mode: byId("job-audio").value || null,
