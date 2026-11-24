@@ -325,7 +325,15 @@ function clipCard(clip, folder, sourceTitle) {
         const range = formatTime(clip.start_time) + " – " + formatTime(clip.end_time);
         body.append(element("p", "clip-time", range + (labels[clip.selection] ? " · " + labels[clip.selection] : "")));
     }
-    body.append(element("code", "clip-filename", clip.filename));
+    const score = clip.packaging_score ?? clip.virality_score;
+    const scoreLine = element("div", "clip-meta-row");
+    scoreLine.append(element("code", "clip-filename", clip.filename));
+    if (score != null) {
+        const verdict = clip.packaging_verdict || (score >= 80 ? "VIRAL" : "STRONG");
+        const badge = element("span", "clip-score-pill", "🎯 " + score + "/100 " + verdict);
+        scoreLine.append(badge);
+    }
+    body.append(scoreLine);
     const actions = element("div", "clip-actions");
     const kit = action("", (event) => openPostingKit(clip, folder, sourceTitle, event.currentTarget), "copy");
     const edit = action("", () => openClipEditor(clip, clipPath, uri), "edit");

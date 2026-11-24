@@ -213,6 +213,10 @@ POST_KIT_FIELDS = {
     "music_brief": 220,
     "sound_effect_prompt": 240,
     "music_track": 255,
+    "packaging_score": 100,
+    "packaging_verdict": 80,
+    "hook_formula": 100,
+    "packaging_feedback": 400,
 }
 POST_KIT_REQUIRED = (
     "title", "title_variants", "hook", "caption_lead", "caption_body", "pinned_comment",

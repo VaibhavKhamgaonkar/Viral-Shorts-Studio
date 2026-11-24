@@ -51,6 +51,10 @@ def posting_metadata(clip_info, source_title, youtube_url=""):
         "posting_kit_version": clip_info.get("posting_kit_version", 0),
         "posting_context": clip_info.get("posting_context", ""),
         "posting_notes": clip_info.get("posting_notes", ""),
+        "packaging_score": clip_info.get("packaging_score"),
+        "packaging_verdict": clip_info.get("packaging_verdict", ""),
+        "hook_formula": clip_info.get("hook_formula", ""),
+        "packaging_feedback": clip_info.get("packaging_feedback", ""),
     }
 
 
@@ -88,7 +92,7 @@ def generate_clip_metadata(clip_info, source_title, output_video_path, youtube_u
     meta_path = output.with_suffix(".json")
     metadata = posting_metadata(clip_info, source_title, youtube_url) | {
         "video_file": output.name,
-        "virality_score": clip_info.get("virality_score"),
+        "virality_score": clip_info.get("virality_score") or clip_info.get("packaging_score") or 75,
         "hook": clip_info.get("hook", ""),
         "reason": clip_info.get("reason", ""),
         "start_time": clip_info.get("start_time"),

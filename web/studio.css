@@ -348,6 +348,8 @@ input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: var
 .clip-title { font-size: .9rem; }
 .clip-time { font-size: .76rem; color: var(--muted); }
 .clip-filename { align-self: flex-start; border-radius: 4px; padding: 2px 6px; background: #efe9e2; color: var(--ink); font: .74rem/1.4 var(--font-data); }
+.clip-meta-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+.clip-score-pill { font-size: .72rem; font-weight: 700; color: #2d3f0c; background: #eef4db; border: 1px solid #c4d196; border-radius: 4px; padding: 2px 6px; }
 .clip-actions { position: relative; display: flex; flex-wrap: wrap; gap: 5px; margin-top: auto; padding-top: 4px; }
 .clip-actions .button { width: 36px; }
 .clip-actions .button:first-child { color: #33460c; background: #eef4db; border-color: #c8d3a2; }
